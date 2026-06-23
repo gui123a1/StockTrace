@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+
+# Django
+db.sqlite3
+*.log
+media/
+staticfiles/
+
+# 虚拟环境
+venv/
+env/
+.venv/
+
+# Node
+node_modules/
+frontend/dist/
+
+# 环境变量
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 现有项目非部署文件
+地址.md
