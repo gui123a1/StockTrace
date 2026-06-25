@@ -11,10 +11,8 @@ from .serializers import (
     StockSearchSerializer,
 )
 from .services import (
-    fetch_stock_info, fetch_daily_data,
-    fetch_minute_data, fetch_stock_all_data,
-    fetch_all_active_stocks,
-    search_stocks,
+    fetch_daily_data, fetch_minute_data, fetch_stock_all_data,
+    fetch_all_active_stocks, search_stocks,
 )
 
 
@@ -28,10 +26,9 @@ class StockViewSet(viewsets.ModelViewSet):
         code = request.data.get('code', '')
         existing = Stock.objects.filter(code=code).first()
         if existing and not existing.is_active:
-            # 恢复已软删除的股票
             name = request.data.get('name', '') or ''
             if not name.strip():
-                name = fetch_stock_info(code) or code
+                name = code
             existing.is_active = True
             existing.name = name
             existing.save()
@@ -41,11 +38,11 @@ class StockViewSet(viewsets.ModelViewSet):
         return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
-        """添加关注时自动补全股票名称"""
+        """添加关注时，名称为空则用代码暂代（后续由数据拉取补全）"""
         code = serializer.validated_data['code']
         name = serializer.validated_data.get('name', '') or ''
         if not name.strip():
-            name = fetch_stock_info(code) or code
+            name = code
         serializer.save(name=name)
 
     def perform_destroy(self, instance):
