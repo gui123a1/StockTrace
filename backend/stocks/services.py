@@ -330,9 +330,9 @@ def _try_sources(method_name, *args, **kwargs):
         except Exception as e:
             last_error = e
             logger.warning(f"数据源 {source.name} 获取 {method_name} 失败: {e}")
-        # 指数退避: 1s, 2s, 4s ...
+        # 指数退避: 1s, 1s, 2s
         if attempt < len(DATA_SOURCES) - 1:
-            delay = min(2 ** attempt, 4)
+            delay = min(2 ** attempt, 2)
             time.sleep(delay)
 
     logger.error(f"所有数据源均失败，最后错误: {last_error}")
@@ -601,6 +601,16 @@ def fetch_stock_all_data(stock, days_back=30):
         stock: Stock 模型实例
         days_back: 拉取多少天的历史分钟数据
     """
+    # 补全股票名称（如果名称还是代码占位或为空）
+    if not stock.name.strip() or stock.name == stock.code:
+        try:
+            real_name = fetch_stock_info(stock.code)
+            if real_name and real_name != stock.code:
+                stock.name = real_name
+                stock.save(update_fields=['name'])
+        except Exception:
+            pass  # 名称补全失败不影响数据拉取
+
     daily_count = fetch_daily_data(stock)
 
     today = timezone.now().date()
