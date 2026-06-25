@@ -45,10 +45,11 @@ async function addStock(code, name) {
     searchResults.value = []
     emit('refresh')
   } catch (e) {
+    console.error('添加失败详细信息:', e.response?.status, e.response?.data, e.message)
     if (e.response?.data?.code) {
       alert('该股票已在关注列表中')
     } else {
-      alert('添加失败，请重试')
+      alert(`添加失败，请重试 (${e.response?.status || '网络错误'}: ${JSON.stringify(e.response?.data || e.message)})`)
     }
   } finally {
     adding.value = false
