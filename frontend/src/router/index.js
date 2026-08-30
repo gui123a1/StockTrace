@@ -1,12 +1,14 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import Dashboard from '../views/Dashboard.vue'
-import StockDetail from '../views/StockDetail.vue'
-import Market from '../views/Market.vue'
-import MarketTrend from '../views/MarketTrend.vue'
-import MarketSectors from '../views/MarketSectors.vue'
-import MarketInstitutions from '../views/MarketInstitutions.vue'
-import MarketNationalEtf from '../views/MarketNationalEtf.vue'
-import MarketEtfRadar from '../views/MarketEtfRadar.vue'
+
+// 首页静态导入；其余页面按路由懒加载，避免 echarts 与市场页全部打进主包
+const StockDetail = () => import('../views/StockDetail.vue')
+const Market = () => import('../views/Market.vue')
+const MarketTrend = () => import('../views/MarketTrend.vue')
+const MarketSectors = () => import('../views/MarketSectors.vue')
+const MarketInstitutions = () => import('../views/MarketInstitutions.vue')
+const MarketNationalEtf = () => import('../views/MarketNationalEtf.vue')
+const MarketEtfRadar = () => import('../views/MarketEtfRadar.vue')
 
 const routes = [
   {
