@@ -1,0 +1,8 @@
+line-length = 120
+target-version = "py312"
+extend-exclude = ["migrations"]
+
+[lint]
+# 默认规则集（E4/E7/E9/F）：只抓未用导入/未用变量/语法与真实错误，
+# 不做风格化重构，避免大面积无意义 diff。
+select = ["E4", "E7", "E9", "F"]
