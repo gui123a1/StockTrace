@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
 import { CandlestickChart, BarChart } from 'echarts/charts'
@@ -32,18 +32,16 @@ const props = defineProps({
 
 const emit = defineEmits(['date-click'])
 
-// 缓存排序后的数据供点击事件使用
-const sortedData = ref([])
+// 排序后的数据供点击事件与图表配置共用
+const sortedData = computed(() =>
+  // 按日期正序排列
+  [...props.data].sort((a, b) => new Date(a.trade_date) - new Date(b.trade_date))
+)
 
 // 将日K数据转为 ECharts 格式
 const chartOption = computed(() => {
-  if (!props.data.length) return {}
-
-  // 按日期正序排列
-  const sorted = [...props.data].sort(
-    (a, b) => new Date(a.trade_date) - new Date(b.trade_date)
-  )
-  sortedData.value = sorted
+  const sorted = sortedData.value
+  if (!sorted.length) return {}
 
   const dates = sorted.map(d => d.trade_date)
   // ECharts K线数据: [open, close, low, high]

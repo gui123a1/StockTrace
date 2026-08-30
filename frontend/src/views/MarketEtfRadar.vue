@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import MarketSubNav from '../components/MarketSubNav.vue'
 import MarketDataStatus from '../components/MarketDataStatus.vue'
