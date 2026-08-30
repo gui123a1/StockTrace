@@ -135,6 +135,12 @@ CORS_ALLOWED_ORIGINS = [
 ]
 
 # DRF
+# ⚠️ 安全边界：本应用自身没有任何认证/授权（AllowAny、无 CSRF），
+# 所有访问控制都依赖反向代理层的 Nginx HTTP Basic Auth。
+# 因此：
+#   1. Gunicorn 只绑定 127.0.0.1，绝不能直接对公网暴露 8000 端口；
+#   2. 任何新部署（换机器/换反代）必须先配好 Basic Auth 再上线；
+#   3. 一旦要去掉 Basic Auth，必须先给 DRF 换上真实认证。
 REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
