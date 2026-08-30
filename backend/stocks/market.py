@@ -602,7 +602,8 @@ def _sort_items(items, field, order):
     """数值字段排序；同值使用代码/名称兜底，保证分页结果稳定。"""
     present = [item for item in items if item.get(field) is not None]
     missing = [item for item in items if item.get(field) is None]
-    tie_key = lambda item: str(item.get('code') or item.get('name') or '')
+    def tie_key(item):
+        return str(item.get('code') or item.get('name') or '')
     present.sort(key=tie_key)
     present.sort(key=lambda item: item[field], reverse=order == 'desc')
     missing.sort(key=tie_key)
@@ -1155,7 +1156,7 @@ def fetch_institution_shareholder_changes(limit=40, ttl=900):
 
     # 用最近季报日
     now = datetime.now()
-    y, m = now.year, now.month
+    y = now.year
     # 候选报告期
     candidates = []
     for yy in (y, y - 1):

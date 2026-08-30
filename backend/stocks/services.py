@@ -232,7 +232,7 @@ class BaoStockSource(DataSource):
         sd = f'{start_date[:4]}-{start_date[4:6]}-{start_date[6:8]}'
         ed = f'{end_date[:4]}-{end_date[4:6]}-{end_date[6:8]}'
 
-        lg = bs.login()
+        bs.login()
         try:
             rs = bs.query_history_k_data_plus(
                 bs_code,
@@ -266,10 +266,8 @@ class BaoStockSource(DataSource):
         bs_code = self._format_code(symbol)
         # start_dt 格式: 'YYYY-MM-DD HH:MM:SS'，提取日期
         date_str = start_dt[:10] if ' ' in start_dt else start_dt
-        sd = date_str.replace('-', '')
-        ed = end_dt[:10].replace('-', '') if ' ' in end_dt else end_dt.replace('-', '')
 
-        lg = bs.login()
+        bs.login()
         try:
             # BaoStock 支持5分钟(frequency='5')，不支持1分钟
             rs = bs.query_history_k_data_plus(
@@ -302,7 +300,7 @@ class BaoStockSource(DataSource):
     def fetch_stock_name(self, code):
         import baostock as bs
         bs_code = self._format_code(code)
-        lg = bs.login()
+        bs.login()
         try:
             rs = bs.query_stock_basic(code=bs_code)
             while rs.next():
@@ -415,7 +413,7 @@ def is_trading_day(date=None):
     # 方式2: BaoStock 交易日历
     try:
         import baostock as bs
-        lg = bs.login()
+        bs.login()
         try:
             rs = bs.query_trade_dates(
                 start_date=date_str, end_date=date_str

@@ -2,7 +2,6 @@
 
 systemd already drops privileges with User=www — do NOT set user/group here.
 """
-import multiprocessing
 import os
 
 bind = '127.0.0.1:8000'
