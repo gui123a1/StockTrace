@@ -45,7 +45,7 @@ class MarketParsingTests(SimpleTestCase):
         self.assertEqual(len(items), 2)
         self.assertEqual(next(item for item in items if item['name'] == 'AI')['net'], -1_500_000_000)
 
-    @patch('stocks.market._fetch_etf_spot_df')
+    @patch('stocks.market.etf._fetch_etf_spot_df')
     def test_etf_radar_filters_sorts_and_paginates(self, fetch_spot):
         fetch_spot.return_value = pd.DataFrame([
             {'代码': '510300', '名称': '沪深300ETF', '最新份额': 300, '成交额': 1000, '主力净流入-净额': 10},
@@ -60,7 +60,7 @@ class MarketParsingTests(SimpleTestCase):
         self.assertEqual(data['items'][0]['code'], '159915')
         self.assertFalse(data['supported_metrics']['share_change_5d'])
 
-    @patch('stocks.market._fetch_etf_spot_df')
+    @patch('stocks.market.etf._fetch_etf_spot_df')
     def test_etf_radar_summary_uses_filtered_full_result_and_sort_is_stable(self, fetch_spot):
         fetch_spot.return_value = pd.DataFrame([
             {'代码': '510500', '名称': '中证500ETF', '成交额': 2000, '主力净流入-净额': 20},
@@ -93,7 +93,7 @@ class MarketParsingTests(SimpleTestCase):
         self.assertEqual(data['unavailable_periods'], ['5d', '10d', '20d'])
         self.assertEqual([item['name'] for item in data['divergences']], ['C', 'B'])
 
-    @patch('stocks.market._fetch_etf_spot_df')
+    @patch('stocks.market.etf._fetch_etf_spot_df')
     def test_national_etf_is_explicitly_watchlist_not_holdings(self, fetch_spot):
         fetch_spot.return_value = pd.DataFrame([{
             '代码': '510300', '名称': '沪深300ETF', '最新价': 4.2,
@@ -110,8 +110,8 @@ class MarketParsingTests(SimpleTestCase):
         for item in data['items']:
             self.assertTrue(forbidden.isdisjoint(item))
 
-    @patch('stocks.market._etf_history')
-    @patch('stocks.market._normalized_etf_items')
+    @patch('stocks.market.etf._etf_history')
+    @patch('stocks.market.etf._normalized_etf_items')
     def test_etf_detail_returns_price_history_only(self, normalized, history):
         normalized.return_value = [{
             'code': '510300', 'name': '沪深300ETF', 'exchange': 'SH',
@@ -130,8 +130,8 @@ class MarketParsingTests(SimpleTestCase):
         self.assertEqual(data['history']['start_date'], '2026-01-01')
         self.assertEqual(data['history']['end_date'], '2026-01-21')
 
-    @patch('stocks.market._etf_history', return_value=[])
-    @patch('stocks.market._normalized_etf_items')
+    @patch('stocks.market.etf._etf_history', return_value=[])
+    @patch('stocks.market.etf._normalized_etf_items')
     def test_etf_detail_keeps_quote_when_history_is_unavailable(self, normalized, history):
         normalized.return_value = [{
             'code': '510300', 'name': '沪深300ETF', 'exchange': 'SH',
@@ -167,7 +167,7 @@ class MarketApiValidationTests(SimpleTestCase):
                 response = self.client.get(f'/api/market/sectors/?{query}')
                 self.assertEqual(response.status_code, 400)
 
-    @patch('stocks.market._fetch_etf_spot_df')
+    @patch('stocks.market.etf._fetch_etf_spot_df')
     def test_etf_radar_api_accepts_filters_and_caps_page_size(self, fetch_spot):
         fetch_spot.return_value = pd.DataFrame([
             {'代码': '510300', '名称': '沪深300ETF', '成交额': 2_000_000_000, '最新份额': 100},

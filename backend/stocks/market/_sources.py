@@ -1,0 +1,85 @@
+"""数据源冷却（cooldown）与多源 failover。
+
+某源连续失败后暂时跳过，降低东财限流概率（简易「负载均衡」）。
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+import time
+
+import pandas as pd
+
+logger = logging.getLogger(__name__)
+
+# 源失败冷却：秒（东财限流时拉长）
+_SOURCE_COOLDOWN_SEC = 180
+_SOURCE_FAIL_THRESHOLD = 2
+_source_lock = threading.Lock()
+# name -> {fails, cool_until, last_ok, last_err}
+_source_state = {}
+
+
+def _source_is_cool(name):
+    st = _source_state.get(name) or {}
+    until = st.get('cool_until') or 0
+    return time.time() < until
+
+
+def _source_mark_ok(name):
+    with _source_lock:
+        _source_state[name] = {
+            'fails': 0,
+            'cool_until': 0,
+            'last_ok': time.time(),
+            'last_err': '',
+        }
+
+
+def _source_mark_fail(name, err):
+    with _source_lock:
+        st = _source_state.get(name) or {'fails': 0, 'cool_until': 0}
+        st['fails'] = int(st.get('fails') or 0) + 1
+        st['last_err'] = str(err)[:200]
+        if st['fails'] >= _SOURCE_FAIL_THRESHOLD:
+            st['cool_until'] = time.time() + _SOURCE_COOLDOWN_SEC
+            logger.warning(
+                f"数据源 {name} 连续失败 {st['fails']} 次，冷却 {_SOURCE_COOLDOWN_SEC}s: {err}"
+            )
+        else:
+            logger.warning(f"数据源 {name} 失败 ({st['fails']}): {err}")
+        _source_state[name] = st
+
+
+def _safe_df_call(fn, *args, source_name=None, **kwargs):
+    """单次调用；可选 source_name 参与冷却统计。"""
+    name = source_name or getattr(fn, '__name__', 'unknown')
+    if _source_is_cool(name):
+        logger.debug(f"跳过冷却中的数据源 {name}")
+        return None
+    try:
+        result = fn(*args, **kwargs)
+        if result is None or (isinstance(result, pd.DataFrame) and result.empty):
+            _source_mark_fail(name, 'empty')
+            return None
+        _source_mark_ok(name)
+        return result
+    except Exception as e:
+        _source_mark_fail(name, e)
+        return None
+
+
+def get_source_health():
+    """调试用：各源冷却状态。"""
+    now = time.time()
+    out = {}
+    with _source_lock:
+        for name, st in _source_state.items():
+            out[name] = {
+                'fails': st.get('fails', 0),
+                'cooling': bool(st.get('cool_until', 0) > now),
+                'cool_remaining_sec': max(0, int((st.get('cool_until') or 0) - now)),
+                'last_err': st.get('last_err', ''),
+            }
+    return out
