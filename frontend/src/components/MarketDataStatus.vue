@@ -18,6 +18,7 @@ const cacheLabel = computed(() => ({
     <div class="status-line">
       <span v-if="meta?.source">来源：{{ meta.source }}</span>
       <span v-if="meta?.source_data_date">数据日期：{{ meta.source_data_date }}</span>
+      <span v-if="meta?.data_as_of">数据截至交易日：{{ meta.data_as_of }}</span>
       <span v-if="meta?.fetched_at">获取：{{ meta.fetched_at }}</span>
       <span v-if="cacheLabel" class="badge">{{ cacheLabel }}</span>
     </div>

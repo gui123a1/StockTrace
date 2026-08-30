@@ -98,7 +98,7 @@ onMounted(load)
       <div>
         <div class='title-row'>
           <h1>板块资金轮动</h1>
-          <span class='live-badge'>当日快照</span>
+          <span class='live-badge'>数据截至 {{ data?.meta?.data_as_of || '最近交易日' }}</span>
         </div>
         <p>行业与概念板块的资金强弱、集中度和价流背离</p>
       </div>

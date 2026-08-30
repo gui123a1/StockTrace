@@ -1,7 +1,10 @@
+from datetime import datetime
+from time import time
 from unittest.mock import patch
 
 import pandas as pd
 from django.test import SimpleTestCase
+from django.utils import timezone
 
 from . import market
 
@@ -145,6 +148,24 @@ class MarketParsingTests(SimpleTestCase):
         self.assertEqual(data['history']['meta']['cache_status'], 'unavailable')
         self.assertIsNone(data['history']['start_date'])
         self.assertIsNone(data['price_performance']['return_5d'])
+
+
+class MarketCacheFreshnessTests(SimpleTestCase):
+    """交易日历感知的新鲜度：TTL 过期但已覆盖最近收盘时，非交易时段不重拉。"""
+
+    def test_stale_entry_fresh_when_covers_last_session_close(self):
+        close = timezone.make_aware(datetime(2026, 8, 28, 15, 0))
+        with patch('stocks.market._cache._calendar_enabled', return_value=True), \
+             patch('stocks.market._cache._data_changing_now', return_value=False), \
+             patch('stocks.market._cache._last_session_close', return_value=close):
+            self.assertTrue(market._is_fresh(close.timestamp() + 60, ttl=60))
+            self.assertFalse(market._is_fresh(close.timestamp() - 60, ttl=60))
+
+    def test_ttl_applies_while_data_changing(self):
+        with patch('stocks.market._cache._calendar_enabled', return_value=True), \
+             patch('stocks.market._cache._data_changing_now', return_value=True):
+            self.assertFalse(market._is_fresh(time() - 600, ttl=60))
+            self.assertTrue(market._is_fresh(time() - 10, ttl=60))
 
 
 class MarketApiValidationTests(SimpleTestCase):

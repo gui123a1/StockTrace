@@ -24,6 +24,7 @@
 
 from . import etf, flows, indices, institutions, overview, sectors  # noqa: F401
 from ._cache import _cache  # noqa: F401  tests 直接清空共享缓存
+from ._cache import _is_fresh  # noqa: F401  tests 使用
 from ._sources import get_source_health  # noqa: F401
 from .etf import (
     NATIONAL_TEAM_ETFS,
