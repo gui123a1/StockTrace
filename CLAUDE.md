@@ -77,8 +77,14 @@ Django DRF (AllowAny; no CSRF — access control is Nginx Basic Auth)
   disclosure. Do not add holder, weight, or entity-attribution fields without
   an auditable primary disclosure source.
 - Market responses expose `meta` (`available`, `source`, `source_data_date`,
-  `fetched_at`, `cache_status`, `disclaimer`). Unknown values remain `null`,
-  never `0`.
+  `data_as_of`, `fetched_at`, `cache_status`, `disclaimer`). Unknown values remain `null`,
+  never `0`. `data_as_of` = 最近已完成交易日（当日横截面数据的归属日）。
+- Cache freshness is trading-calendar aware (`market._cache._is_fresh`): within
+  TTL → fresh; beyond TTL, an entry already covering the last completed session
+  close (15:00) stays fresh outside the trading-day 09:15–21:00 window — no
+  upstream refetch on weekends/holidays/pre-market. Calendar is skipped under
+  `manage.py test`.
+- Index trend: `GET /api/market/trend/?days=30|60|120|250`（默认 120）。
 
 ### Product rules
 
