@@ -20,6 +20,9 @@ frontend/dist/
 .reference-sector-flow.jpg
 .sector-desktop.png
 
+# 历史发布快照归档（保留在本地，不入库；发布改用 git 标签）
+StockTrace v*/
+
 # OS
 .DS_Store
 Thumbs.db
