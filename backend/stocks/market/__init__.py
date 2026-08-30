@@ -38,6 +38,8 @@ from .flows import (
     fetch_hsgt_flow,
     fetch_market_activity,
     fetch_market_fund_flow_hist,
+    get_market_fund_flow_window,
+    get_northbound_window,
 )
 from .indices import MAJOR_INDICES, TREND_INDICES, fetch_index_trend, fetch_major_indices
 from .institutions import (
@@ -50,6 +52,7 @@ from .institutions import (
 from .overview import get_market_overview, get_market_trend, warm_post_close_lagging
 from .sectors import (
     _parse_fund_flow_table,  # noqa: F401  validate_market_sources / tests 使用
+    _parse_sector_rank_table,  # noqa: F401  tests 使用
     _sector_payload,  # noqa: F401  tests 使用
     fetch_concept_fund_flow,
     fetch_industry_fund_flow,
@@ -63,6 +66,8 @@ __all__ = [
     'get_sector_rotation',
     'get_national_team_etfs',
     'get_national_team_flow',
+    'get_market_fund_flow_window',
+    'get_northbound_window',
     'get_etf_share_radar',
     'get_etf_detail',
     'get_institution_holdings',

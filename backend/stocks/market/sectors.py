@@ -21,6 +21,47 @@ _SECTOR_SORT_FIELDS = {
     'leader_pct': 'leader_pct',
 }
 
+# 上游原生多日排行（东财 clist 接口，净额单位为元）；更长区间需日度快照积累
+_SECTOR_RANK_INDICATORS = {'5d': '5日', '10d': '10日'}
+_SECTOR_PERIODS = ('day', '5d', '10d')
+
+
+def _parse_sector_rank_table(df):
+    """解析 stock_sector_fund_flow_rank 的 clist 形状（列带指标前缀，单位为元）。"""
+    if df is None or df.empty:
+        return []
+    name_col = next((c for c in ('行业', '板块名', '名称') if c in df.columns), None)
+    net_col = next((c for c in df.columns if str(c).endswith('主力净流入-净额')), None)
+    if name_col is None or net_col is None:
+        return []
+    pct_col = next((c for c in df.columns if str(c).endswith('涨跌幅')), None)
+
+    items = []
+    for _, row in df.iterrows():
+        net = _to_float(row.get(net_col))
+        if net is None:
+            continue
+        items.append({
+            'name': str(row.get(name_col, '')).strip(),
+            'net': net,
+            'inflow': None,
+            'outflow': None,
+            'change_pct': _to_float(row.get(pct_col)) if pct_col else None,
+            'index_value': None,
+            'company_count': None,
+            'leader': None,
+            'leader_pct': None,
+        })
+
+    by_name = {}
+    for item in items:
+        if not item['name']:
+            continue
+        previous = by_name.get(item['name'])
+        if previous is None or abs(item['net']) > abs(previous['net']):
+            by_name[item['name']] = item
+    return list(by_name.values())
+
 
 def _parse_fund_flow_table(df, name_col_candidates):
     if df is None or df.empty:
@@ -73,29 +114,45 @@ def _parse_fund_flow_table(df, name_col_candidates):
     return list(by_name.values())
 
 
-def fetch_concept_fund_flow(ttl=180):
-    cache_key = 'concept_ff_all'
+def fetch_concept_fund_flow(period='day', ttl=180):
+    cache_key = f'concept_ff_{period}'
     cached = _cache_get(cache_key, ttl)
     if cached is not None:
         return cached
-    df = _safe_df_call(ak.stock_fund_flow_concept, source_name='em_fund_flow_concept')
-    data = _parse_fund_flow_table(df, ['行业', '概念'])
+    if period == 'day':
+        df = _safe_df_call(ak.stock_fund_flow_concept, source_name='em_fund_flow_concept')
+        data = _parse_fund_flow_table(df, ['行业', '概念'])
+    else:
+        indicator = _SECTOR_RANK_INDICATORS[period]
+        df = _safe_df_call(
+            ak.stock_sector_fund_flow_rank, indicator=indicator,
+            sector_type='概念资金流', source_name=f'em_sector_rank_concept_{period}',
+        )
+        data = _parse_sector_rank_table(df)
     _cache_set(cache_key, data)
     return data
 
 
-def fetch_industry_fund_flow(ttl=180):
-    cache_key = 'industry_ff_all'
+def fetch_industry_fund_flow(period='day', ttl=180):
+    cache_key = f'industry_ff_{period}'
     cached = _cache_get(cache_key, ttl)
     if cached is not None:
         return cached
-    df = _safe_df_call(ak.stock_fund_flow_industry, source_name='em_fund_flow_industry')
-    data = _parse_fund_flow_table(df, ['行业'])
+    if period == 'day':
+        df = _safe_df_call(ak.stock_fund_flow_industry, source_name='em_fund_flow_industry')
+        data = _parse_fund_flow_table(df, ['行业'])
+    else:
+        indicator = _SECTOR_RANK_INDICATORS[period]
+        df = _safe_df_call(
+            ak.stock_sector_fund_flow_rank, indicator=indicator,
+            sector_type='行业资金流', source_name=f'em_sector_rank_industry_{period}',
+        )
+        data = _parse_sector_rank_table(df)
     _cache_set(cache_key, data)
     return data
 
 
-def _sector_payload(items, board, q='', sort='net', order='desc', page=1, page_size=50):
+def _sector_payload(items, board, period='day', q='', sort='net', order='desc', page=1, page_size=50):
     if q:
         needle = q.lower()
         items = [item for item in items if needle in item['name'].lower() or needle in (item.get('leader') or '').lower()]
@@ -119,9 +176,10 @@ def _sector_payload(items, board, q='', sort='net', order='desc', page=1, page_s
     return {
         'available': bool(items),
         'board': board,
-        'period': 'day',
-        'supported_periods': ['day'],
-        'unavailable_periods': ['5d', '10d', '20d'],
+        'period': period,
+        'supported_periods': list(_SECTOR_PERIODS),
+        'unavailable_periods': ['1m', '3m', '6m', '1y'],
+        'unavailable_reason': '更长区间需要日度快照积累后开放',
         'summary': {
             'sample_count': len(items),
             'net_total': total_net if items else None,
@@ -142,23 +200,33 @@ def _sector_payload(items, board, q='', sort='net', order='desc', page=1, page_s
     }
 
 
-def get_sector_rotation(board='industry', q='', sort='net', order='desc', page=1, page_size=50):
+def get_sector_rotation(board='industry', period='day', q='', sort='net', order='desc', page=1, page_size=50):
     if board not in ('industry', 'concept'):
         raise ValueError('board 必须是 industry 或 concept')
+    if period not in _SECTOR_PERIODS:
+        raise ValueError('period 必须是 day、5d 或 10d')
     if sort not in _SECTOR_SORT_FIELDS:
         raise ValueError('不支持的板块排序字段')
     if order not in ('asc', 'desc'):
         raise ValueError('order 必须是 asc 或 desc')
 
-    loader = fetch_industry_fund_flow if board == 'industry' else fetch_concept_fund_flow
-    payload = _sector_payload(loader(), board, q=q, sort=sort, order=order, page=page, page_size=page_size)
-    cache_key = 'industry_ff_all' if board == 'industry' else 'concept_ff_all'
+    if board == 'industry':
+        loader = fetch_industry_fund_flow
+        cache_key = f'industry_ff_{period}'
+    else:
+        loader = fetch_concept_fund_flow
+        cache_key = f'concept_ff_{period}'
+    payload = _sector_payload(
+        loader(period=period), board, period=period,
+        q=q, sort=sort, order=order, page=page, page_size=page_size,
+    )
     return {
         'updated_at': _now_str(),
         'meta': _cache_meta(
             cache_key,
             180,
-            f'akshare.stock_fund_flow_{board}',
+            f'akshare.stock_fund_flow_{board}' if period == 'day'
+            else f'akshare.stock_sector_fund_flow_rank({period})',
             payload['available'],
             disclaimer=payload['methodology'],
         ),

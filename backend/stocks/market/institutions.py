@@ -39,19 +39,29 @@ def _quarter_label(code):
     return s
 
 
-def fetch_institute_hold_stocks(limit=40, ttl=600):
+def _normalize_quarter(raw):
+    """'2026Q1' 或 '20261' -> '20261'；非法输入抛 ValueError。"""
+    s = str(raw).strip().upper().replace('Q', '')
+    if len(s) == 5 and s[:4].isdigit() and s[4] in '1234':
+        return s
+    raise ValueError('quarter 格式应为 YYYYQn（如 2026Q1）')
+
+
+def fetch_institute_hold_stocks(limit=40, ttl=600, quarter=None):
     """
     机构持股汇总（按股票）：机构数、持股比例及变化。
-    数据源 stock_institute_hold(symbol=季度码)，自动找最近有数据的季度。
+    数据源 stock_institute_hold(symbol=季度码)，自动找最近有数据的季度；
+    传入 quarter（如 2026Q1）则只查指定季度。
     """
-    cache_key = f'inst_hold_stocks_{limit}'
+    quarter_fixed = _normalize_quarter(quarter) if quarter else None
+    cache_key = f'inst_hold_stocks_{limit}_{quarter_fixed or "latest"}'
     cached = _cache_get(cache_key, ttl)
     if cached is not None:
         return cached
 
     quarter_used = None
     df = None
-    for q in _recent_report_quarters(10):
+    for q in ([quarter_fixed] if quarter_fixed else _recent_report_quarters(10)):
         raw = _safe_df_call(
             ak.stock_institute_hold,
             symbol=q,
@@ -103,6 +113,7 @@ def fetch_institute_hold_stocks(limit=40, ttl=600):
     data = {
         'available': True,
         'quarter': quarter_used,
+        'quarter_requested': quarter_fixed,
         'quarter_label': _quarter_label(quarter_used) if quarter_used else None,
         'items': items,
         'message': '',
@@ -328,9 +339,10 @@ def fetch_stock_institution_detail(code, ttl=600):
     return data
 
 
-def get_institution_holdings(stock_code=None):
-    """机构持仓专题页聚合。stock_code 可选，提供则附带个股明细。"""
-    stocks = fetch_institute_hold_stocks(limit=40)
+def get_institution_holdings(stock_code=None, quarter=None):
+    """机构持仓专题页聚合。stock_code 可选，提供则附带个股明细；
+    quarter（如 2026Q1）可选，指定机构持股汇总的报告期。"""
+    stocks = fetch_institute_hold_stocks(limit=40, quarter=quarter)
     orgs = fetch_institution_shareholder_changes(limit=30)
     north = fetch_northbound_flow_series(days=60)
 

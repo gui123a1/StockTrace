@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from time import time
 from unittest.mock import patch
 
@@ -93,8 +93,59 @@ class MarketParsingTests(SimpleTestCase):
         self.assertEqual(data['summary']['inflow_count'], 2)
         self.assertEqual(data['summary']['outflow_count'], 1)
         self.assertEqual(data['summary']['neutral_count'], 0)
-        self.assertEqual(data['unavailable_periods'], ['5d', '10d', '20d'])
+        self.assertEqual(data['period'], 'day')
+        self.assertEqual(data['unavailable_periods'], ['1m', '3m', '6m', '1y'])
         self.assertEqual([item['name'] for item in data['divergences']], ['C', 'B'])
+
+    def test_sector_rank_table_uses_upstream_yuan_values(self):
+        # 东财 clist 排行榜形状：列带指标前缀，净额单位已是元
+        frame = pd.DataFrame([
+            {'序号': 1, '行业': '半导体', '5日涨跌幅': 2.5, '5日主力净流入-净额': 1_500_000_000.0},
+            {'序号': 2, '行业': '软件', '5日涨跌幅': -1.2, '5日主力净流入-净额': -800_000_000.0},
+        ])
+        items = market._parse_sector_rank_table(frame)
+
+        self.assertEqual(len(items), 2)
+        self.assertEqual(items[0]['net'], 1_500_000_000.0)
+        self.assertEqual(items[1]['change_pct'], -1.2)
+        self.assertIsNone(items[0]['inflow'])
+
+    @patch('stocks.market.sectors.fetch_industry_fund_flow')
+    def test_sector_rotation_supports_native_multi_day_periods(self, fetch_flow):
+        fetch_flow.return_value = [
+            {'name': '半导体', 'net': 100.0, 'inflow': None, 'outflow': None,
+             'change_pct': 1.0, 'leader': None, 'leader_pct': None},
+        ]
+        data = market.get_sector_rotation(board='industry', period='5d')
+
+        fetch_flow.assert_called_once_with(period='5d')
+        self.assertEqual(data['period'], '5d')
+        self.assertIn('5d', data['supported_periods'])
+
+    @patch('stocks.market.etf_flow.flow_history')
+    @patch('stocks.market.etf_flow._FLOW_FETCH_INTERVAL', 0)
+    def test_flow_trading_day_periods_take_recent_rows(self, mock_hist):
+        from datetime import date, timedelta
+
+        base = {'small_net': None, 'mid_net': None, 'large_net': None, 'super_net': None,
+                'close': 1.0, 'change_pct': 0.0}
+        rows = [
+            {'date': (date.today() - timedelta(days=n)).isoformat(), 'main_net': float(n), **base}
+            for n in range(9, 0, -1)
+        ]
+        mock_hist.return_value = rows
+        data = market.get_national_team_flow(period='3d')
+
+        top = data['items'][0]
+        self.assertEqual(top['days'], 3)
+        # 尾部 3 行的 main_net：3 + 2 + 1
+        self.assertEqual(top['total_main_net'], 6.0)
+
+    def test_flow_custom_range_validation(self):
+        with self.assertRaises(ValueError):
+            market.get_national_team_flow(start='2026-08-10', end='2026-08-01')
+        with self.assertRaises(ValueError):
+            market.get_national_team_flow(start='2026/08/01')
 
     @patch('stocks.market.etf._fetch_etf_spot_df')
     def test_national_etf_is_explicitly_watchlist_not_holdings(self, fetch_spot):
@@ -222,6 +273,103 @@ class NationalEtfFlowTests(SimpleTestCase):
         self.assertEqual(mock_hist.call_count, calls)  # 第二次命中进程缓存
 
 
+class PeriodWindowTests(SimpleTestCase):
+    """统一区间解析：预设档位窗口、自定义起止与校验。"""
+
+    def _resolve(self, params, **kwargs):
+        from stocks.market.periods import FULL_PRESETS, resolve_period
+
+        merged = {'period': '', 'start': '', 'end': ''}
+        merged.update(params)
+        return resolve_period(
+            lambda key, default='': merged.get(key, default),
+            kwargs.pop('allowed', FULL_PRESETS), today=date(2026, 8, 30), **kwargs,
+        )
+
+    def test_preset_window_uses_natural_days(self):
+        from datetime import date
+
+        window = self._resolve({'period': '3m'})
+        self.assertEqual(window.start, date(2026, 6, 2))
+        self.assertEqual(window.end, date(2026, 8, 30))
+
+    def test_1d_window_is_single_day(self):
+        window = self._resolve({'period': '1d'})
+        self.assertEqual(window.start, date(2026, 8, 30))
+        self.assertEqual(window.end, date(2026, 8, 30))
+
+    def test_custom_window(self):
+        window = self._resolve({'period': 'custom', 'start': '2026-03-01', 'end': '2026-03-31'})
+        self.assertEqual(window.preset, 'custom')
+        self.assertEqual(window.start.isoformat(), '2026-03-01')
+
+    def test_custom_start_after_end_raises(self):
+        with self.assertRaises(ValueError):
+            self._resolve({'period': 'custom', 'start': '2026-03-31', 'end': '2026-03-01'})
+
+    def test_custom_span_over_limit_raises(self):
+        with self.assertRaises(ValueError):
+            self._resolve({'period': 'custom', 'start': '2020-01-01', 'end': '2026-03-01'})
+
+    def test_disallowed_preset_raises(self):
+        with self.assertRaises(ValueError):
+            self._resolve({'period': '2w'}, allowed=['1d', '1w'])
+
+    def test_custom_not_allowed_raises(self):
+        with self.assertRaises(ValueError):
+            self._resolve(
+                {'period': 'custom', 'start': '2026-03-01', 'end': '2026-03-31'},
+                allow_custom=False,
+            )
+
+
+class MarketWindowEndpointTests(SimpleTestCase):
+    """大盘资金流/北向窗口聚合端点。"""
+
+    def setUp(self):
+        market._cache.clear()
+
+    @patch('stocks.market.etf_flow.fetch_flow_klines')
+    def test_market_flow_window_sums_and_drops_out_of_range(self, mock_fetch):
+        from stocks.market.periods import PeriodWindow
+        from datetime import date
+
+        window = PeriodWindow('custom', date(2026, 8, 27), date(2026, 8, 28))
+        mock_fetch.return_value = [
+            '2026-08-26,100.0,0.0,0.0,0.0,0.0,0,0,0,0,0,3000.0,0.5',   # 窗口外
+            '2026-08-27,200.0,0.0,0.0,0.0,0.0,0,0,0,0,0,3100.0,0.5',
+            '2026-08-28,-50.0,0.0,0.0,0.0,0.0,0,0,0,0,0,3090.0,-0.1',
+        ]
+        data = market.get_market_fund_flow_window(window)
+
+        self.assertTrue(data['available'])
+        self.assertEqual(data['summary']['days'], 2)
+        self.assertEqual(data['summary']['total_main_net'], 150.0)
+        self.assertEqual(data['summary']['inflow_days'], 1)
+        self.assertEqual(data['coverage_start'], '2026-08-26')  # 上游覆盖早于窗口起点
+        self.assertFalse(data['truncated'])  # 覆盖范围完全包含窗口，未截断
+
+    @patch('stocks.market.institutions.fetch_northbound_flow_series')
+    def test_northbound_window_slices_series(self, mock_series):
+        from stocks.market.periods import PeriodWindow
+        from datetime import date
+
+        window = PeriodWindow('custom', date(2026, 8, 27), date(2026, 8, 28))
+        mock_series.return_value = {
+            'source': 'stock_hsgt_hist_em',
+            'items': [
+                {'date': '2026-08-26', 'net_buy': 10.0},
+                {'date': '2026-08-27', 'net_buy': 20.0},
+                {'date': '2026-08-28', 'net_buy': -5.0},
+            ],
+        }
+        data = market.get_northbound_window(window)
+
+        self.assertTrue(data['available'])
+        self.assertEqual(data['summary']['days'], 2)
+        self.assertEqual(data['summary']['total_net_buy'], 15.0)
+
+
 class MarketApiValidationTests(SimpleTestCase):
     def test_invalid_etf_scope_returns_400(self):
         response = self.client.get('/api/market/etf-radar/?scope=bad')
@@ -237,10 +385,22 @@ class MarketApiValidationTests(SimpleTestCase):
                 self.assertEqual(response.status_code, 400)
 
     def test_invalid_sector_query_parameters_return_400(self):
-        for query in ('board=bad', 'sort=bad', 'order=bad', 'page_size=0'):
+        for query in ('board=bad', 'period=bad', 'sort=bad', 'order=bad', 'page_size=0'):
             with self.subTest(query=query):
                 response = self.client.get(f'/api/market/sectors/?{query}')
                 self.assertEqual(response.status_code, 400)
+
+    def test_invalid_trend_period_returns_400(self):
+        response = self.client.get('/api/market/trend/?period=bad')
+        self.assertEqual(response.status_code, 400)
+
+    def test_invalid_trend_custom_range_returns_400(self):
+        response = self.client.get('/api/market/trend/?start=2026-08-10&end=2026-08-01')
+        self.assertEqual(response.status_code, 400)
+
+    def test_invalid_national_flow_custom_range_returns_400(self):
+        response = self.client.get('/api/market/national-etf/flow/?start=2026-08-10&end=2026-08-01')
+        self.assertEqual(response.status_code, 400)
 
     @patch('stocks.market.etf._fetch_etf_spot_df')
     def test_etf_radar_api_accepts_filters_and_caps_page_size(self, fetch_spot):

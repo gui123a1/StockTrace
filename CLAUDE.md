@@ -84,13 +84,25 @@ Django DRF (AllowAny; no CSRF — access control is Nginx Basic Auth)
   close (15:00) stays fresh outside the trading-day 09:15–21:00 window — no
   upstream refetch on weekends/holidays/pre-market. Calendar is skipped under
   `manage.py test`.
-- Index trend: `GET /api/market/trend/?days=30|60|120|250`（默认 120）。
-- National-team flow: `GET /api/market/national-etf/flow/?period=1w|1m|3m|ytd`
-  聚合 18 只观察 ETF 的历史每日主力净流入（`market/etf_flow.py`，原生
-  requests 直连 push2his，https 退避重试 + http 兜底——本机/代理对东财
-  TLS 有间歇性干扰，故意不走 akshare）。上游深度仅约 120 个交易日，
-  超出区间如实标注 coverage_start；整包结果只在 18 只全部拉齐时缓存，
-  部分失败由单只缓存渐进收敛；线路上游不可达时探针快速失败。
+- Index trend: `GET /api/market/trend/` 区间三选一：`?period=1w|1m|3m|6m|1y|ytd`
+  （交易日数 5/22/66/130/260）、`?days=30|60|120|250`（旧参数兼容）、
+  `?start=&end=`（自定义，最长约 3 年）。
+- National-team flow: `GET /api/market/national-etf/flow/?period=1d|3d|5d|1w|1m|3m|6m|ytd`
+  或 `?start=&end=` 自定义（1d/3d/5d 按交易日取尾部）。聚合 18 只观察 ETF
+  的历史每日主力净流入（`market/etf_flow.py`，原生 requests 直连 push2his，
+  https 退避重试 + http 兜底——本机/代理对东财 TLS 有间歇性干扰，故意不走
+  akshare）。上游深度仅约 120 个交易日，超出区间如实标注 coverage_start；
+  整包结果只在 18 只全部拉齐时缓存，部分失败由单只缓存渐进收敛；线路上游
+  不可达时探针快速失败。
+- Market flow window: `GET /api/market/market-flow/?period=`（大盘主力资金流，
+  secid 1.000001，同一 fflow 接口，深度约 120 交易日）。
+- Northbound window: `GET /api/market/northbound/?period=`（北向净买额区间切片）。
+- Sector rotation: `GET /api/market/sectors/?period=day|5d|10d`——东财板块资金
+  流排行接口原生多日周期（无 3d），`market/sectors.py` 直接消费，无需自建快照。
+- ETF detail: `?range=1w|1m|3m|6m|1y`。
+- Institutions: `?quarter=2026Q1` 可指定机构持股汇总报告期（默认最近有数据季度）。
+- 统一区间解析：`market/periods.py`（预设档位 1d/3d/5d/1w/2w/1m/3m/6m/1y/ytd
+  + 自定义起止 + 跨度上限），新接口一律通过它声明支持的档位。
 
 ### Product rules
 

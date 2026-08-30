@@ -1,0 +1,108 @@
+"""行情区间统一解析：预设档位 + 自定义起止。
+
+档位语义（自然日回推，end 默认今天）：
+    1d 当日 / 3d 近3日 / 5d 近5日 / 1w 近1周 / 2w 近2周
+    1m 近1月 / 3m 近3月 / 6m 近6月 / 1y 近1年 / ytd 今年以来
+
+每个数据接口通过 `allowed` 声明自己支持的档位（如当日横截面数据只有
+'1d'），通过 allow_custom 控制是否支持自定义起止；超出上游数据深度时
+由各接口在返回的 meta 中如实标注覆盖范围。
+"""
+
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta
+
+PERIOD_LABELS = {
+    '1d': '当日',
+    '3d': '近3日',
+    '5d': '近5日',
+    '1w': '近1周',
+    '2w': '近2周',
+    '1m': '近1月',
+    '3m': '近3月',
+    '6m': '近6月',
+    '1y': '近1年',
+    'ytd': '今年以来',
+    'custom': '自定义',
+}
+
+_PRESET_DAYS = {
+    '1d': 1, '3d': 3, '5d': 5, '1w': 7, '2w': 14,
+    '1m': 30, '3m': 90, '6m': 182, '1y': 365,
+}
+
+# 日频历史型数据的全档位（受上游深度限制时由接口标注覆盖范围）
+FULL_PRESETS = ['1d', '3d', '5d', '1w', '1m', '3m', '6m', '1y', 'ytd']
+# 当日横截面型数据（上游无历史，多周期需快照积累）
+DAILY_ONLY = ['1d']
+
+
+class PeriodWindow:
+    """解析后的区间窗口。"""
+
+    def __init__(self, preset, start, end):
+        self.preset = preset
+        self.start = start
+        self.end = end
+
+    def meta(self):
+        return {
+            'preset': self.preset,
+            'label': PERIOD_LABELS.get(self.preset, self.preset),
+            'start': self.start.isoformat(),
+            'end': self.end.isoformat(),
+        }
+
+    def contains(self, date_str):
+        """ISO 日期字符串是否落在窗口内。"""
+        return bool(date_str) and self.start.isoformat() <= date_str[:10] <= self.end.isoformat()
+
+
+def resolve_period(params_get, allowed, default='1m', allow_custom=True,
+                   max_span_days=400, today=None):
+    """从查询参数解析区间窗口；非法输入抛 ValueError（视图层转 400）。
+
+    params_get: callable(key, default='')，通常为 request.query_params.get
+    """
+    today = today or date.today()
+    preset = (params_get('period') or '').strip() or default
+    start_raw = (params_get('start') or '').strip()
+    end_raw = (params_get('end') or '').strip()
+
+    if preset == 'custom' or start_raw or end_raw:
+        if not allow_custom:
+            raise ValueError('该数据不支持自定义区间')
+        if preset != 'custom' and preset not in (allowed or []):
+            raise ValueError(f'period 仅支持 {"/".join(allowed)}')
+        return _custom_window(params_get, today, max_span_days)
+
+    if preset not in allowed:
+        raise ValueError(f'period 仅支持 {"/".join(allowed)}')
+    days = _PRESET_DAYS[preset]
+    start = today if days == 1 else today - timedelta(days=days - 1)
+    return PeriodWindow(preset, start, today)
+
+
+def _custom_window(params_get, today, max_span_days):
+    def _parse(raw, key, fallback):
+        raw = (raw or '').strip()
+        if not raw:
+            return fallback
+        try:
+            return datetime.strptime(raw, '%Y-%m-%d').date()
+        except ValueError as e:
+            raise ValueError(f'{key} 格式应为 YYYY-MM-DD') from e
+
+    end = _parse(params_get('end'), 'end', today)
+    start = _parse(params_get('start'), 'start', end - timedelta(days=30))
+    if start > end:
+        raise ValueError('start 不能晚于 end')
+    if (end - start).days > max_span_days:
+        raise ValueError(f'自定义区间最长 {max_span_days} 天')
+    return PeriodWindow('custom', start, end)
+
+
+def period_cache_key(prefix, window):
+    """带区间的缓存键。"""
+    return f'{prefix}_{window.start.isoformat()}_{window.end.isoformat()}'

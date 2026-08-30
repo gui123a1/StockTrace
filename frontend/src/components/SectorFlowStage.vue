@@ -10,9 +10,13 @@ import {
 
 const props = defineProps({
   board: { type: String, default: 'industry' },
+  period: { type: String, default: 'day' },
   loading: { type: Boolean, default: false },
   data: { type: Object, default: null },
 })
+
+const periodLabel = computed(() =>
+  props.period === '5d' ? '5日累计' : props.period === '10d' ? '10日累计' : '当日')
 
 const summary = computed(() => props.data?.summary || {})
 const inflowRows = computed(() => (props.data?.inflow_top || []).slice(0, 5))
@@ -36,7 +40,7 @@ function barWidth(row, side) {
         <span class='eyebrow'>资金流向</span>
         <h2>{{ board === 'industry' ? '行业' : '概念' }}板块前五强弱</h2>
       </div>
-      <span class='method-label'>当日横截面</span>
+      <span class='method-label'>{{ periodLabel }}</span>
     </div>
 
     <div v-if='loading && !data' class='flow-loading'>正在加载板块资金...</div>

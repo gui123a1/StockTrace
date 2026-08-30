@@ -18,10 +18,13 @@ from .market import (
     get_sector_rotation,
     get_national_team_etfs,
     get_national_team_flow,
+    get_market_fund_flow_window,
+    get_northbound_window,
     get_etf_share_radar,
     get_etf_detail,
     get_institution_holdings,
 )
+from .market.periods import FULL_PRESETS, resolve_period
 
 
 class StockViewSet(viewsets.ModelViewSet):
@@ -266,12 +269,43 @@ def market_overview(request):
 
 @api_view(['GET'])
 def market_trend(request):
-    """全市场走势：多指数归一化对比；?days=30|60|120|250"""
+    """全市场走势：多指数归一化对比。
+
+    区间三选一：?period=1w|1m|3m|6m|1y|ytd（默认 3m）、
+    ?days=30|60|120|250（兼容旧参数）、?start=&end=（自定义，YYYY-MM-DD）。
+    """
     def load():
-        days = _positive_int(request, 'days', 120)
-        if days not in (30, 60, 120, 250):
-            raise ValueError('days 仅支持 30、60、120、250')
-        return get_market_trend(days=days)
+        start = request.query_params.get('start')
+        end = request.query_params.get('end')
+        days_raw = request.query_params.get('days')
+        if start or end:
+            from datetime import date as date_cls, datetime, timedelta
+            try:
+                start_d = datetime.strptime(start, '%Y-%m-%d').date() if start else None
+                end_d = datetime.strptime(end, '%Y-%m-%d').date() if end else timezone.localdate()
+            except (TypeError, ValueError):
+                raise ValueError('start/end 必须是 YYYY-MM-DD')
+            start_d = start_d or end_d - timedelta(days=90)
+            if start_d > end_d:
+                raise ValueError('start 不能晚于 end')
+            if (end_d - start_d).days > 1100:
+                raise ValueError('自定义区间最长约 3 年')
+            return get_market_trend(start=start_d.isoformat(), end=end_d.isoformat())
+        if days_raw:
+            days = _positive_int(request, 'days', 120)
+            if days not in (30, 60, 120, 250):
+                raise ValueError('days 仅支持 30、60、120、250')
+            return get_market_trend(days=days)
+        period = request.query_params.get('period', '3m')
+        period_days = {'1w': 5, '1m': 22, '3m': 66, '6m': 130, '1y': 260}
+        if period == 'ytd':
+            today = timezone.localdate()
+            days = max(5, int((today - date_cls(today.year, 1, 1)).days * 5 / 7))
+        elif period in period_days:
+            days = period_days[period]
+        else:
+            raise ValueError('period 必须是 1w、1m、3m、6m、1y 或 ytd')
+        return get_market_trend(days=min(days, 300))
     return _market_bad_request(load)
 
 
@@ -316,6 +350,7 @@ def market_sectors(request):
     def load():
         return get_sector_rotation(
             board=request.query_params.get('board', 'industry'),
+            period=request.query_params.get('period', 'day'),
             q=(request.query_params.get('q') or '').strip(),
             sort=request.query_params.get('sort', 'net'),
             order=request.query_params.get('order', 'desc'),
@@ -333,9 +368,13 @@ def market_national_etf(request):
 
 @api_view(['GET'])
 def market_national_etf_flow(request):
-    """国家队 ETF 区间资金流向：?period=1w|1m|3m|ytd（历史每日主力净流入聚合）。"""
+    """国家队 ETF 区间资金流向：?period=1d|3d|5d|1w|1m|3m|6m|ytd 或 ?start=&end= 自定义。"""
     def load():
-        return get_national_team_flow(period=request.query_params.get('period', '3m'))
+        return get_national_team_flow(
+            period=request.query_params.get('period', '3m'),
+            start=request.query_params.get('start'),
+            end=request.query_params.get('end'),
+        )
     return _market_bad_request(load)
 
 
@@ -366,11 +405,33 @@ def market_etf_detail(request, code):
 
 
 @api_view(['GET'])
+def market_fund_flow_window(request):
+    """大盘主力资金流区间聚合：?period= 档位 或 ?start=&end= 自定义。"""
+    def load():
+        window = resolve_period(request.query_params.get, FULL_PRESETS, default='1m')
+        return get_market_fund_flow_window(window)
+    return _market_bad_request(load)
+
+
+@api_view(['GET'])
+def market_northbound_window(request):
+    """北向资金净买额区间聚合：?period= 档位 或 ?start=&end= 自定义。"""
+    def load():
+        window = resolve_period(request.query_params.get, FULL_PRESETS, default='1m')
+        return get_northbound_window(window)
+    return _market_bad_request(load)
+
+
+@api_view(['GET'])
 def market_institutions(request):
-    """机构持仓：按股汇总 / 按机构变动 / 北向序列；?code= 可选个股明细"""
+    """机构持仓：按股汇总 / 按机构变动 / 北向序列；?code= 可选个股明细，
+    ?quarter=2026Q1 可指定机构持股汇总的报告期（默认最近有数据的季度）。"""
     code = (request.query_params.get('code') or '').strip() or None
+    quarter = (request.query_params.get('quarter') or '').strip() or None
     try:
-        return Response(get_institution_holdings(stock_code=code))
+        return Response(get_institution_holdings(stock_code=code, quarter=quarter))
+    except ValueError as e:
+        return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     except Exception as e:
         return Response(
             {'detail': f'获取机构持仓失败: {e}'},

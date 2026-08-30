@@ -9,6 +9,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 import MarketSubNav from '../components/MarketSubNav.vue'
 import MarketDataStatus from '../components/MarketDataStatus.vue'
 import EtfDetailPanel from '../components/EtfDetailPanel.vue'
+import PeriodPicker from '../components/PeriodPicker.vue'
 import { marketApi } from '../api/stocks.js'
 import { formatPct, formatNum, pctClass } from '../utils/format.js'
 import { formatAmount, formatShare } from '../utils/marketFormat.js'
@@ -30,21 +31,34 @@ async function load() {
 function select(row) { selectedCode.value = row.code; router.replace({ query: { code: row.code } }) }
 
 // ── 区间资金流向（历史每日主力净流入聚合） ──────────────
-const FLOW_PERIODS = [['1w', '近1周'], ['1m', '近1月'], ['3m', '近3月'], ['ytd', '今年以来']]
+const FLOW_PERIODS = [
+  ['1d', '当日'], ['3d', '3日'], ['5d', '5日'], ['1w', '近1周'],
+  ['1m', '近1月'], ['3m', '近3月'], ['6m', '近半年'], ['ytd', '今年以来'], ['custom', '自定义'],
+]
 const flowPeriod = ref('3m')
+const flowCustomStart = ref('')
+const flowCustomEnd = ref('')
 const flowLoading = ref(false), flowError = ref(''), flowData = ref(null)
 const flowItems = computed(() => flowData.value?.items || [])
 const flowSummary = computed(() => flowData.value?.summary || {})
 
 async function loadFlow() {
   flowLoading.value = true; flowError.value = ''
-  try { flowData.value = (await marketApi.getNationalEtfFlow(flowPeriod.value)).data }
-  catch (e) { flowError.value = e.response?.data?.detail || '加载区间资金流向失败' }
+  try {
+    const params = flowPeriod.value === 'custom'
+      ? { start: flowCustomStart.value, end: flowCustomEnd.value }
+      : { period: flowPeriod.value }
+    flowData.value = (await marketApi.getNationalEtfFlow(params)).data
+  } catch (e) { flowError.value = e.response?.data?.detail || '加载区间资金流向失败' }
   finally { flowLoading.value = false }
 }
 function setFlowPeriod(p) {
   if (flowPeriod.value === p) return
   flowPeriod.value = p
+  if (p !== 'custom') loadFlow()
+}
+function applyCustomFlow() {
+  if (!flowCustomStart.value && !flowCustomEnd.value) return
   loadFlow()
 }
 
@@ -130,12 +144,23 @@ onMounted(() => { load(); loadFlow() })
           <h2>区间资金流向（主力净流入合计）</h2>
           <small>上游仅提供最近约 120 个交易日历史；为当日资金快照口径，不代表真实持仓变化</small>
         </div>
-        <div class="flow-tabs">
-          <button v-for="[p, label] in FLOW_PERIODS" :key="p" type="button"
-                  :class="{ active: flowPeriod === p }" :disabled="flowLoading" @click="setFlowPeriod(p)">{{ label }}</button>
+      <div class="flow-tabs-wrap">
+        <PeriodPicker
+          :model-value="flowPeriod"
+          :options="FLOW_PERIODS"
+          :loading="flowLoading"
+          @update:model-value="setFlowPeriod"
+        />
+        <div v-if="flowPeriod === 'custom'" class="custom-range">
+          <input v-model="flowCustomStart" type="date" aria-label="开始日期" />
+          <span>至</span>
+          <input v-model="flowCustomEnd" type="date" aria-label="结束日期" />
+          <button type="button" class="custom-apply" :disabled="flowLoading" @click="applyCustomFlow">查询</button>
         </div>
       </div>
-      <div v-if="flowError" class="error-box">{{ flowError }}</div>
+    </div>
+    <div v-if="flowError" class="error-box">{{ flowError }}</div>
+    <div v-if="flowData?.note" class="flow-note">{{ flowData.note }}</div>
       <div v-if="flowData?.summary" class="flow-summary">
         <div><label>区间合计净流入</label><b :class="pctClass(flowSummary.total_main_net)">{{ formatAmount(flowSummary.total_main_net) }}</b></div>
         <div><label>净流入 / 流出家数</label><b>{{ flowSummary.inflow_count ?? '-' }} / {{ flowSummary.outflow_count ?? '-' }}</b></div>
@@ -156,6 +181,6 @@ onMounted(() => { load(); loadFlow() })
 
 <style scoped>
 .page{color:#dce4f2}.page-header{display:flex;justify-content:space-between;gap:12px;margin-bottom:11px}.page-header h1{margin:0;font-size:22px}.page-header p{margin:4px 0 0;color:#71809a;font-size:13px}.title-line{display:flex;align-items:center;gap:9px;flex-wrap:wrap}.title-line span{color:#ffbd6b;background:#382711;border:1px solid #694718;border-radius:5px;padding:3px 7px;font-size:11px}.title-line span.date-chip{color:#8fc6d6;background:#122736;border-color:#2e4a5e}.primary{cursor:pointer;border:1px solid #286391;background:#174673;color:#fff;border-radius:6px;padding:7px 13px}.primary:disabled{opacity:.5}.error-box{background:#3a1520;color:#ff8796;padding:10px;border-radius:7px;margin-bottom:10px}.warning{background:#211b15;border:1px solid #584126;color:#cbb892;padding:10px 12px;border-radius:8px;font-size:12px;margin-bottom:10px;line-height:1.5}.warning b{color:#f0bd71;margin-right:6px}.definition{display:flex;flex-wrap:wrap;gap:8px 18px;background:#0d1729;border:1px solid #293b5b;border-radius:8px;padding:9px 11px;margin-bottom:10px;color:#7e8ca4;font-size:12px}.definition b{color:#aeb9cb}.summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-bottom:10px}.summary-grid>div{background:#111d34;border:1px solid #213251;border-radius:8px;padding:11px}.summary-grid label{display:block;color:#68758d;font-size:11px}.summary-grid b{display:block;margin-top:5px;font-size:17px}.workbench{display:grid;grid-template-columns:minmax(0,1.8fr) minmax(320px,.9fr);gap:10px;margin-bottom:10px;align-items:start}.table-card{min-width:0;background:#111d34;border:1px solid #213251;border-radius:10px;overflow:hidden}.table-wrap{overflow:auto;max-height:720px}table{width:100%;border-collapse:collapse;font-size:12px}th{position:sticky;top:0;background:#0d192d;color:#7887a1;font-weight:500;text-align:right;padding:9px 8px;white-space:nowrap}td{padding:8px;border-bottom:1px solid #1d2a43;text-align:right;white-space:nowrap}th:nth-child(-n+3),td:nth-child(-n+3){text-align:left}tbody tr{cursor:pointer}tbody tr:hover,tbody tr.selected{background:#162b49}tr.muted{opacity:.5;cursor:not-allowed}.code{color:#7eb8e8}.name{color:#e0e7f1}.name small{color:#80736a;font-size:10px;margin-left:4px}.empty{text-align:center;padding:40px;color:#64718a}
-.flow-panel{background:#111d34;border:1px solid #213251;border-radius:10px;padding:12px 14px;margin-bottom:10px}.flow-head{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start;justify-content:space-between;margin-bottom:10px}.flow-head h2{margin:0;font-size:15px;color:#e6ecf4}.flow-head small{display:block;margin-top:4px;color:#68758d;font-size:11px}.flow-tabs{display:flex;gap:6px}.flow-tabs button{cursor:pointer;border:1px solid #293b5b;background:#0d1729;color:#9eabc1;border-radius:6px;padding:6px 12px;font-size:12px}.flow-tabs button.active{background:#174673;color:#fff;border-color:#286391}.flow-tabs button:disabled{opacity:.5;cursor:not-allowed}.flow-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-bottom:10px}.flow-summary>div{background:#0d1729;border:1px solid #213251;border-radius:8px;padding:10px}.flow-summary label{display:block;color:#68758d;font-size:11px}.flow-summary b{display:block;margin-top:4px;font-size:16px}.flow-note{border:1px solid #554526;background:#201b14;color:#e8b766;border-radius:7px;padding:8px 10px;margin-bottom:10px;font-size:12px}.flow-loading{text-align:center;padding:60px 20px;color:#64718a;font-size:13px}
+.flow-panel{background:#111d34;border:1px solid #213251;border-radius:10px;padding:12px 14px;margin-bottom:10px}.flow-head{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start;justify-content:space-between;margin-bottom:10px}.flow-head h2{margin:0;font-size:15px;color:#e6ecf4}.flow-head small{display:block;margin-top:4px;color:#68758d;font-size:11px}.flow-tabs-wrap{display:flex;flex-direction:column;gap:8px;align-items:flex-end}.custom-range{display:flex;gap:6px;align-items:center;font-size:12px;color:#9eabc1}.custom-range input{background:#0d1729;border:1px solid #293b5b;color:#ddd;border-radius:5px;padding:4px 7px;color-scheme:dark}.custom-apply{cursor:pointer;border:1px solid #286391;background:#174673;color:#fff;border-radius:5px;padding:5px 12px}.custom-apply:disabled{opacity:.5}.flow-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-bottom:10px}.flow-summary>div{background:#0d1729;border:1px solid #213251;border-radius:8px;padding:10px}.flow-summary label{display:block;color:#68758d;font-size:11px}.flow-summary b{display:block;margin-top:4px;font-size:16px}.flow-note{border:1px solid #554526;background:#201b14;color:#e8b766;border-radius:7px;padding:8px 10px;margin-bottom:10px;font-size:12px}.flow-loading{text-align:center;padding:60px 20px;color:#64718a;font-size:13px}
 @media(max-width:1000px){.workbench{grid-template-columns:1fr}.summary-grid,.flow-summary{grid-template-columns:repeat(2,1fr)}}
 </style>

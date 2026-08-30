@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import MarketSubNav from '../components/MarketSubNav.vue'
 import MarketDataStatus from '../components/MarketDataStatus.vue'
+import PeriodPicker from '../components/PeriodPicker.vue'
 import SectorFlowStage from '../components/SectorFlowStage.vue'
 import SectorInsights from '../components/SectorInsights.vue'
 import { marketApi } from '../api/stocks.js'
@@ -16,6 +17,7 @@ const loading = ref(false)
 const error = ref('')
 const data = ref(null)
 const board = ref(route.query.board === 'concept' ? 'concept' : 'industry')
+const period = ref(route.query.period === '5d' || route.query.period === '10d' ? route.query.period : 'day')
 const q = ref(route.query.q || '')
 const sort = ref(route.query.sort || 'net')
 const order = ref(route.query.order === 'asc' ? 'asc' : 'desc')
@@ -37,6 +39,7 @@ async function load(reset = false) {
   try {
     data.value = (await marketApi.getSectors({
       board: board.value,
+      period: period.value,
       q: q.value || undefined,
       sort: sort.value,
       order: order.value,
@@ -56,6 +59,7 @@ function syncUrl() {
   router.replace({
     query: {
       ...(board.value === 'concept' ? { board: 'concept' } : {}),
+      ...(period.value !== 'day' ? { period: period.value } : {}),
       ...(q.value ? { q: q.value } : {}),
       ...(sort.value !== 'net' ? { sort: sort.value } : {}),
       ...(order.value !== 'desc' ? { order: order.value } : {}),
@@ -66,6 +70,12 @@ function syncUrl() {
 
 function switchBoard(value) {
   board.value = value
+  load(true)
+}
+
+function switchPeriod(value) {
+  if (period.value === value) return
+  period.value = value
   load(true)
 }
 
@@ -113,11 +123,19 @@ onMounted(load)
         <button type='button' :class='{ active: board === `industry` }' @click='switchBoard(`industry`)'>行业资金</button>
         <button type='button' :class='{ active: board === `concept` }' @click='switchBoard(`concept`)'>概念资金</button>
       </div>
-      <div class='period-tabs' aria-label='统计周期'>
-        <button type='button' class='active'>当日</button>
-        <button type='button' disabled title='积累日度快照后开放'>5日</button>
-        <button type='button' disabled title='积累日度快照后开放'>10日</button>
-        <button type='button' disabled title='积累日度快照后开放'>20日</button>
+      <div>
+        <PeriodPicker
+          :model-value="period"
+          :options="[['day', '当日'], ['5d', '5日'], ['10d', '10日']]"
+          :disabled-options="[
+            ['1m', '1月', '需要日度快照积累后开放'],
+            ['3m', '3月', '需要日度快照积累后开放'],
+            ['1y', '1年', '需要日度快照积累后开放'],
+          ]"
+          :loading="loading"
+          @update:model-value="switchPeriod"
+        />
+        <small class="period-note">{{ period === 'day' ? '当日横截面' : '上游多日累计排行' }} · 1月/3月/1年待日度快照积累后开放</small>
       </div>
       <form class='search-form' @submit.prevent='load(true)'>
         <input v-model.trim='q' aria-label='搜索板块或领涨股' placeholder='搜索板块或领涨股' />
@@ -132,7 +150,7 @@ onMounted(load)
       <div><span>前三集中度</span><strong>{{ formatPct(summary.top_three_inflow_concentration_pct) }}</strong></div>
     </section>
 
-    <SectorFlowStage :board='board' :loading='loading' :data='data' />
+    <SectorFlowStage :board="board" :period="period" :loading="loading" :data="data" />
     <SectorInsights :summary='summary' :divergence-count='data?.divergences?.length || 0' />
 
     <section v-if='data?.divergences?.length' class='divergences'>
@@ -148,7 +166,7 @@ onMounted(load)
     <section class='table-card'>
       <div class='table-title'>
         <div><h2>{{ board === 'industry' ? '行业' : '概念' }}完整明细</h2><span>{{ pagination.total }} 条</span></div>
-        <small>当日资金快照</small>
+        <small>{{ period === 'day' ? '当日资金快照' : period === '5d' ? '5日累计排行' : '10日累计排行' }}</small>
       </div>
       <div class='table-wrap'>
         <table>
@@ -331,6 +349,13 @@ button:disabled {
 
 .search-form button {
   padding: 6px 14px;
+}
+
+.period-note {
+  display: block;
+  margin-top: 5px;
+  color: #6b7987;
+  font-size: 10px;
 }
 
 .snapshot-strip {

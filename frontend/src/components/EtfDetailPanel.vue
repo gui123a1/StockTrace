@@ -18,6 +18,8 @@ const error = ref('')
 const data = ref(null)
 const range = ref('3m')
 
+const RANGE_OPTIONS = [['1w', '1周'], ['1m', '1月'], ['3m', '3月'], ['6m', '半年'], ['1y', '1年']]
+
 const quote = computed(() => data.value?.quote || {})
 const performance = computed(() => data.value?.price_performance || {})
 const history = computed(() => data.value?.history?.items || [])
@@ -79,7 +81,7 @@ watch(range, load)
         <div><label>折溢价</label><b :class="pctClass(quote.discount_rate)">{{ formatPct(quote.discount_rate) }}</b></div>
       </div>
       <div class="range-tabs">
-        <button v-for="r in ['1m','3m','6m','1y']" :key="r" :class="{ active: range === r }" @click="range = r">{{ r }}</button>
+        <button v-for="r in RANGE_OPTIONS" :key="r[0]" :class="{ active: range === r[0] }" @click="range = r[0]">{{ r[1] }}</button>
       </div>
       <v-chart v-if="history.length && chartOption.series" :option="chartOption" autoresize class="chart" />
       <div v-else class="history-empty">

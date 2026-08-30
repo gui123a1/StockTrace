@@ -11,6 +11,7 @@ import {
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import MarketSubNav from '../components/MarketSubNav.vue'
+import PeriodPicker from '../components/PeriodPicker.vue'
 import { marketApi } from '../api/stocks.js'
 import { formatPct, pctClass } from '../utils/format.js'
 
@@ -25,14 +26,26 @@ use([
 
 const COLORS = ['#e94560', '#4fc3f7', '#ffb74d', '#81c784', '#ba68c8']
 
-const DAYS_OPTIONS = [30, 60, 120, 250]
+const PERIOD_OPTIONS = [
+  ['1w', '近1周'], ['1m', '近1月'], ['3m', '近3月'],
+  ['6m', '近半年'], ['1y', '近1年'], ['ytd', '今年以来'], ['custom', '自定义'],
+]
+const PERIOD_DAYS = { '1w': 5, '1m': 22, '3m': 66, '6m': 130, '1y': 260 }
 
 const loading = ref(false)
 const error = ref('')
 const data = ref(null)
-const days = ref(120)
+const period = ref('3m')
+const customStart = ref('')
+const customEnd = ref('')
 
 const seriesList = computed(() => data.value?.series || [])
+const rangeLabel = computed(() => {
+  if (period.value === 'custom') {
+    return data.value?.start ? `${data.value.start} ~ ${data.value.end || ''}` : '自定义区间'
+  }
+  return `近 ${data.value?.days || PERIOD_DAYS[period.value] || 66} 交易日`
+})
 
 const chartOption = computed(() => {
   const list = seriesList.value
@@ -100,7 +113,10 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const res = await marketApi.getTrend({ days: days.value })
+    const params = period.value === 'custom'
+      ? { start: customStart.value, end: customEnd.value }
+      : { period: period.value }
+    const res = await marketApi.getTrend(params)
     data.value = res.data
   } catch (e) {
     console.error(e)
@@ -110,9 +126,14 @@ async function load() {
   }
 }
 
-function setDays(value) {
-  if (days.value === value) return
-  days.value = value
+function setPeriod(value) {
+  if (period.value === value) return
+  period.value = value
+  if (value !== 'custom') load()
+}
+
+function applyCustom() {
+  if (!customStart.value && !customEnd.value) return
   load()
 }
 
@@ -126,7 +147,7 @@ onMounted(load)
       <div>
         <h1>全市场走势</h1>
         <p class="sub">
-          近 {{ data?.days || days }} 交易日归一化对比（首日=0%）
+          {{ rangeLabel }}归一化对比（首日=0%）
           <span v-if="data?.updated_at"> · {{ data.updated_at }}</span>
         </p>
       </div>
@@ -138,15 +159,18 @@ onMounted(load)
     <div v-if="error" class="error-box">{{ error }}</div>
 
     <div class="range-bar">
-      <span class="range-label">时间范围</span>
-      <button
-        v-for="d in DAYS_OPTIONS"
-        :key="d"
-        class="range-btn"
-        :class="{ active: days === d }"
-        :disabled="loading"
-        @click="setDays(d)"
-      >{{ d }}日</button>
+      <PeriodPicker
+        :model-value="period"
+        :options="PERIOD_OPTIONS"
+        :loading="loading"
+        @update:model-value="setPeriod"
+      />
+      <div v-if="period === 'custom'" class="custom-range">
+        <input v-model="customStart" type="date" aria-label="开始日期" />
+        <span>至</span>
+        <input v-model="customEnd" type="date" aria-label="结束日期" />
+        <button class="apply-btn" :disabled="loading" @click="applyCustom">查询</button>
+      </div>
     </div>
 
     <section class="section">
@@ -198,22 +222,15 @@ onMounted(load)
 .btn:disabled { opacity: 0.6; }
 .range-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   margin-bottom: 12px;
 }
-.range-label { color: #888; font-size: 12px; margin-right: 4px; }
-.range-btn {
-  padding: 5px 12px;
-  border: 1px solid #2b3947;
-  border-radius: 5px;
-  background: #121b24;
-  color: #9eabb8;
-  cursor: pointer;
-  font-size: 12px;
-}
-.range-btn.active { border-color: #327495; background: #163649; color: #e9f7ff; }
-.range-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.custom-range { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #9eabb8; }
+.custom-range input { background: #121b24; border: 1px solid #2b3947; color: #ddd; border-radius: 5px; padding: 4px 7px; color-scheme: dark; }
+.apply-btn { padding: 5px 12px; border: 1px solid #286391; background: #174673; color: #fff; border-radius: 5px; cursor: pointer; }
+.apply-btn:disabled { opacity: .5; }
 .error-box {
   background: #3a1520;
   color: #ff8a9a;

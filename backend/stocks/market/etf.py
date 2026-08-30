@@ -221,7 +221,7 @@ def _etf_history(code, range_name='3m', ttl=1200):
     if cached is not None:
         return cached
 
-    days = {'1m': 45, '3m': 120, '6m': 240, '1y': 400}[range_name]
+    days = {'1w': 12, '1m': 45, '3m': 120, '6m': 240, '1y': 400}[range_name]
     end = datetime.now().date()
     start = end - timedelta(days=days)
     df = _safe_df_call(
@@ -263,8 +263,8 @@ def _period_return(history, bars):
 def get_etf_detail(code, range_name='3m'):
     if not (str(code).isdigit() and len(str(code)) == 6):
         raise ValueError('ETF 代码必须是 6 位数字')
-    if range_name not in ('1m', '3m', '6m', '1y'):
-        raise ValueError('range 必须是 1m、3m、6m 或 1y')
+    if range_name not in ('1w', '1m', '3m', '6m', '1y'):
+        raise ValueError('range 必须是 1w、1m、3m、6m 或 1y')
 
     quote = next((item for item in _normalized_etf_items() if item['code'] == code), None)
     if quote is None:

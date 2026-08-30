@@ -1,12 +1,17 @@
-"""北向资金 / 涨跌家数情绪 / 大盘主力资金历史。"""
+"""北向资金 / 涨跌家数情绪 / 大盘主力资金历史与窗口聚合。"""
 
 from __future__ import annotations
+
+import logging
 
 import akshare as ak
 import pandas as pd
 
-from ._cache import _cache_get, _cache_set, _stale_or, _to_float
+from ._cache import _cache_get, _cache_meta, _cache_set, _stale_or, _to_float
 from ._sources import _safe_df_call, _source_is_cool, _source_mark_fail, _source_mark_ok
+from .periods import period_cache_key
+
+logger = logging.getLogger(__name__)
 
 
 def fetch_hsgt_flow(ttl=120, force=False):
@@ -190,5 +195,106 @@ def fetch_market_fund_flow_hist(days=30, ttl=300, force=False):
             },
         )
     else:
+        _cache_set(cache_key, data)
+    return data
+
+
+def get_market_fund_flow_window(window, ttl=300):
+    """大盘主力资金流窗口聚合（东财 fflow 日线，secid=1.000001 上证指数）。
+
+    与 akshare 版 fetch_market_fund_flow_hist 数据同源但走自有抓取
+    （https 退避重试 + http 兜底）；上游深度约 120 个交易日，超出部分
+    以 coverage_start 如实标注。
+    """
+    from .etf_flow import fetch_flow_klines, parse_flow_kline
+
+    cache_key = period_cache_key('market_ff_win', window)
+    cached = _cache_get(cache_key, ttl)
+    if cached is not None:
+        return cached
+
+    upstream_error = ''
+    coverage_start = None
+    all_rows = []
+    try:
+        klines = fetch_flow_klines('1.000001')
+        all_rows = [r for r in (parse_flow_kline(k) for k in klines) if r]
+        if all_rows:
+            coverage_start = all_rows[0]['date']
+    except Exception as e:  # noqa: BLE001  线路降级
+        upstream_error = str(e)
+        logger.warning('大盘资金流窗口获取失败: %s', e)
+
+    rows = [r for r in all_rows if window.contains(r['date'])]
+    total = lambda key: round(sum(r.get(key) or 0 for r in rows), 2)  # noqa: E731
+
+    data = {
+        'available': bool(rows),
+        'window': window.meta(),
+        'coverage_start': coverage_start,
+        'truncated': bool(coverage_start and window.start.isoformat() < coverage_start),
+        'items': rows,
+        'summary': {
+            'days': len(rows),
+            'total_main_net': total('main_net') if rows else None,
+            'total_super_net': total('super_net') if rows else None,
+            'total_large_net': total('large_net') if rows else None,
+            'total_mid_net': total('mid_net') if rows else None,
+            'total_small_net': total('small_net') if rows else None,
+            'inflow_days': sum(1 for r in rows if (r.get('main_net') or 0) > 0),
+            'outflow_days': sum(1 for r in rows if (r.get('main_net') or 0) < 0),
+        },
+        'message': (
+            f'大盘资金流获取失败（{upstream_error}），稍后可重试'
+            if upstream_error and not rows else
+            '' if rows else '区间内暂无数据'
+        ),
+        'note': (
+            f'区间起点早于上游覆盖范围，实际自 {coverage_start} 起计算'
+            if coverage_start and window.start.isoformat() < coverage_start else ''
+        ),
+        'meta': _cache_meta(
+            cache_key, ttl, 'eastmoney.push2his fflow daykline (1.000001)', bool(rows),
+            source_data_date=rows[-1]['date'] if rows else None,
+            disclaimer='历史主力净流入来自东方财富，上游仅提供最近约 120 个交易日。',
+        ),
+    }
+    if rows:
+        _cache_set(cache_key, data)
+    return data
+
+
+def get_northbound_window(window, ttl=300):
+    """北向资金净买额窗口聚合（基于历史序列切片）。"""
+    from .institutions import fetch_northbound_flow_series
+
+    cache_key = period_cache_key('north_win', window)
+    cached = _cache_get(cache_key, ttl)
+    if cached is not None:
+        return cached
+
+    series = fetch_northbound_flow_series(days=400)
+    items = [i for i in series.get('items', []) if window.contains(i.get('date'))]
+    total_net = round(sum(i.get('net_buy') or 0 for i in items), 2)
+
+    data = {
+        'available': bool(items),
+        'window': window.meta(),
+        'coverage_start': items[0]['date'] if items else None,
+        'items': items,
+        'summary': {
+            'days': len(items),
+            'total_net_buy': total_net if items else None,
+            'inflow_days': sum(1 for i in items if (i.get('net_buy') or 0) > 0),
+            'outflow_days': sum(1 for i in items if (i.get('net_buy') or 0) < 0),
+        },
+        'message': '' if items else '区间内暂无北向数据',
+        'meta': _cache_meta(
+            cache_key, ttl, series.get('source') or 'stock_hsgt_hist_em', bool(items),
+            source_data_date=items[-1]['date'] if items else None,
+            disclaimer='北向资金为历史成交净买额口径，存在披露口径变化。',
+        ),
+    }
+    if items:
         _cache_set(cache_key, data)
     return data

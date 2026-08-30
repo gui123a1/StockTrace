@@ -74,9 +74,12 @@ def fetch_major_indices(ttl=60):
     return result
 
 
-def fetch_index_trend(days=120, ttl=300):
-    """多指数收盘价序列 + 归一化涨跌幅（相对窗口首日）。"""
-    cache_key = f'trend_{days}'
+def fetch_index_trend(days=120, ttl=300, start=None, end=None):
+    """多指数收盘价序列 + 归一化涨跌幅（相对窗口首日）。
+
+    days=取最近 N 个交易日；传 start/end（YYYY-MM-DD）则按日期切片。
+    """
+    cache_key = f'trend_{days}_{start or ""}_{end or ""}'
     cached = _cache_get(cache_key, ttl)
     if cached is not None:
         return cached
@@ -90,7 +93,15 @@ def fetch_index_trend(days=120, ttl=300):
             continue
         df = df.copy()
         df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
-        df = df.sort_values('date').tail(days)
+        df = df.sort_values('date')
+        if start:
+            df = df[df['date'] >= start]
+            if end:
+                df = df[df['date'] <= end]
+        else:
+            df = df.tail(days)
+        if df.empty:
+            continue
         closes = []
         for _, r in df.iterrows():
             closes.append({
@@ -115,7 +126,9 @@ def fetch_index_trend(days=120, ttl=300):
 
     data = {
         'available': bool(series),
-        'days': days,
+        'days': None if start else days,
+        'start': start,
+        'end': end,
         'series': series,
         'message': '' if series else '指数日线暂不可用',
     }
