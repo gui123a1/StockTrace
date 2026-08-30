@@ -22,16 +22,19 @@ python manage.py fetch_stock_data --all
 python manage.py fetch_stock_data 000001 --days 5
 python manage.py validate_market_sources  # read-only upstream field/source audit
 python manage.py test stocks              # market service and API contract tests
+python -m ruff check .                    # lint (config: backend/ruff.toml; dev dep, see requirements-dev.txt)
 
 # Frontend
 cd frontend
 npm install
 npm run dev      # http://localhost:5173 — proxies /api → localhost:8000
 npm run build    # → frontend/dist (Nginx root on VPS)
+npm run lint     # eslint (flat config; vue essential 档，不做模板风格化)
 ```
 
-There is no project-wide linter. Market service and API coverage lives in
-`backend/stocks/tests.py`; run `python manage.py test stocks` from `backend/`.
+Linters: backend 用 `ruff`（仅 E4/E7/E9/F，抓真实错误不做风格化）；frontend 用
+`eslint`（核心推荐 + vue essential）。两者都刻意不含风格化规则，避免大面积
+格式 diff；Prettier 仅提供 `npm run format` 供按需使用，未做全量重排。
 
 ## Architecture
 
@@ -55,7 +58,7 @@ Django DRF (AllowAny; no CSRF — access control is Nginx Basic Auth)
 | Frontend API | `frontend/src/api/stocks.js` |
 | Pages / charts | `frontend/src/views/*`, `components/KlineChart.vue`, `IntradayChart.vue` |
 | Format helpers | `frontend/src/utils/format.js` |
-| Market hub + modules | `backend/stocks/market.py`; routes under `/api/market/`; pages `/market`, `/market/trend|sectors|institutions|national-etf|etf-radar`. Source cooldown + multi-source failover for external market APIs. |
+| Market hub + modules | `backend/stocks/market/`（包：`_cache`/`_sources`/`_query` 共享层 + `indices`/`flows`/`sectors`/`etf`/`institutions`/`overview` 各域模块，`__init__` 保持统一导入面）; routes under `/api/market/`; pages `/market`, `/market/trend|sectors|institutions|national-etf|etf-radar`. Source cooldown + multi-source failover for external market APIs. |
 
 ### Market Hub Phase 1
 
@@ -124,8 +127,9 @@ Django DRF (AllowAny; no CSRF — access control is Nginx Basic Auth)
 cd backend
 python manage.py test stocks
 
-# Frontend production bundle.
+# Frontend production bundle + lint.
 cd frontend
+npm run lint
 npm run build
 ```
 

@@ -1,6 +1,6 @@
 # StockTrace 项目进度
 
-最后更新：2026-08-03
+最后更新：2026-08-30
 
 本文件记录已经完成并经过验证的工作。实现完成但尚未验证的事项保持“进行中”，不得提前标记完成。
 
@@ -14,8 +14,20 @@
 | 已完成 | 项目与发布文档同步 | 根 `CLAUDE.md`、v1.02 `README.md` 和 `deploy/DEPLOY.md` 已补齐数据边界与验证命令 |
 | 已完成 | v1.02 源码快照同步 | 14 个行情中心一期源码文件与 `CLAUDE.md` 已同步，并通过 SHA256 一致性校验 |
 | 已完成 | 发布前验证 | Django 市场测试和前端生产构建均已通过；v1.02 同步文件已完成 SHA256 校验 |
+| 已完成 | 工程化改进（2026-08-30） | git 版本控制、ruff/eslint 静态检查、market 包拆分、板块页组件化、路由懒加载；**v1.02 快照尚未同步本轮改动**，下次发布时按快照同步规则执行 |
 
 ## 完成记录
+
+### 2026-08-30：工程化改进（版本控制 / 拆分 / lint / 包体积）
+
+- **git 版本控制**：根目录 `git init`（分支 main），新增根 `.gitignore`（排除 venv、node_modules、dist、数据库、调度锁、`.env` 与含凭据的 `地址.md`），以现有代码建立基线提交。
+- **后端 lint**：接入 ruff（`backend/ruff.toml`，仅 E4/E7/E9/F）+ `requirements-dev.txt`；修复 9 处未用导入/死代码。验证：`ruff check` 全绿，16 个 Django 测试通过。
+- **market 模块拆分**：1482 行 `market.py` 拆为 `stocks/market/` 包（`_cache`/`_sources`/`_query` 共享层 + indices/flows/sectors/etf/institutions/overview 六个域模块），包 `__init__` 保持原导入面，views/scheduler/validate 命令零改动；测试桩路径改指 `stocks.market.etf.*`；删除从未调用的 `_try_source_fns`。验证：`manage.py test stocks` 16 通过、`manage.py check` 无问题、`validate_market_sources` 实测上游正常。
+- **前端路由懒加载**：除首页外全部路由改动态导入。主包 837.36 kB（gzip 284.74 kB）→ 148.61 kB（gzip 56.65 kB），echarts 拆为 481 kB 独立异步 chunk，不再触发 500 kB 警告。
+- **板块资金页组件化**：1175 行 `MarketSectors.vue` 拆出 `SectorFlowStage.vue`（资金流向舞台）与 `SectorInsights.vue`（解读/强弱面板），纯展示函数抽到 `utils/sectorFlow.js`，页面降至 575 行。验证：生产构建通过；浏览器实测 1280px/375px 渲染、板块切换交互、空数据兜底均正常。
+- **前端 lint**：接入 eslint 10 flat config（核心推荐 + vue essential，不做模板风格化）与 prettier 配置（仅 `npm run format`，未全量重排）；新增 `npm run lint`。修复 4 项：KlineChart computed 内副作用改为派生 computed、MarketEtfRadar 未用 watch、两个单词组件名按 views 目录豁免。
+- **安全边界说明**：`settings.py` DRF 段写明 AllowAny + 无 CSRF 依赖 Nginx Basic Auth 的三条红线。
+- 遗留：`StockTrace v1.02/` 快照为发布动作，本轮改动未同步；下次发布按 CLAUDE.md 快照同步规则执行。
 
 ### 2026-08-03：发布范围审计
 
