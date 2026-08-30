@@ -85,6 +85,12 @@ Django DRF (AllowAny; no CSRF — access control is Nginx Basic Auth)
   upstream refetch on weekends/holidays/pre-market. Calendar is skipped under
   `manage.py test`.
 - Index trend: `GET /api/market/trend/?days=30|60|120|250`（默认 120）。
+- National-team flow: `GET /api/market/national-etf/flow/?period=1w|1m|3m|ytd`
+  聚合 18 只观察 ETF 的历史每日主力净流入（`market/etf_flow.py`，原生
+  requests 直连 push2his，https 退避重试 + http 兜底——本机/代理对东财
+  TLS 有间歇性干扰，故意不走 akshare）。上游深度仅约 120 个交易日，
+  超出区间如实标注 coverage_start；整包结果只在 18 只全部拉齐时缓存，
+  部分失败由单只缓存渐进收敛；线路上游不可达时探针快速失败。
 
 ### Product rules
 

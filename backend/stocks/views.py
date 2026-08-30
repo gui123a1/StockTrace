@@ -17,6 +17,7 @@ from .market import (
     get_market_trend,
     get_sector_rotation,
     get_national_team_etfs,
+    get_national_team_flow,
     get_etf_share_radar,
     get_etf_detail,
     get_institution_holdings,
@@ -328,6 +329,14 @@ def market_sectors(request):
 def market_national_etf(request):
     """国家队相关 ETF 观察名单（非官方持仓）。"""
     return _market_response(get_national_team_etfs, '国家队相关ETF观察')
+
+
+@api_view(['GET'])
+def market_national_etf_flow(request):
+    """国家队 ETF 区间资金流向：?period=1w|1m|3m|ytd（历史每日主力净流入聚合）。"""
+    def load():
+        return get_national_team_flow(period=request.query_params.get('period', '3m'))
+    return _market_bad_request(load)
 
 
 @api_view(['GET'])

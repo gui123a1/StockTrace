@@ -83,7 +83,7 @@ onMounted(() => load())
   <div class="page">
     <MarketSubNav />
     <div class="page-header">
-      <div><h1>ETF 份额雷达</h1><p>股票/宽基规则筛选与全市场 ETF 快照研究台</p></div>
+      <div><div class="title-line"><h1>ETF 份额雷达</h1><span v-if="data?.meta?.source_data_date" class="date-chip">数据截至 {{ data.meta.source_data_date }}</span></div><p>股票/宽基规则筛选与全市场 ETF 快照研究台 · 份额为最新快照，历史份额变化需积累日度快照后开放</p></div>
       <button class="primary" @click="load()" :disabled="loading">{{ loading ? '加载中...' : '刷新' }}</button>
     </div>
     <div v-if="error" class="error-box">{{ error }}</div>
@@ -148,7 +148,7 @@ onMounted(() => load())
 </template>
 
 <style scoped>
-.page { color: #dce4f2; }.page-header { display:flex; justify-content:space-between; gap:12px; margin-bottom:12px; }.page-header h1 { margin:0; font-size:22px; }.page-header p { margin:4px 0 0; color:#71809a; font-size:13px; }
+.page { color: #dce4f2; }.page-header { display:flex; justify-content:space-between; gap:12px; margin-bottom:12px; }.page-header h1 { margin:0; font-size:22px; }.page-header p { margin:4px 0 0; color:#71809a; font-size:13px; }.title-line { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }.date-chip { color:#8fc6d6; background:#122736; border:1px solid #2e4a5e; border-radius:5px; padding:3px 7px; font-size:11px; }
 button { cursor:pointer; border:1px solid #293b5b; background:#111d34; color:#9eabc1; border-radius:6px; padding:7px 12px; }.primary,.rank-tabs button.active,.scope-row button.active { background:#174673; color:#fff; border-color:#286391; }button:disabled { opacity:.45; cursor:not-allowed; }.error-box { background:#3a1520; color:#ff8796; padding:10px; border-radius:7px; margin-bottom:10px; }
 .scope-row,.rank-tabs,.filters { display:flex; flex-wrap:wrap; gap:7px; align-items:center; margin-bottom:10px; }.scope-row span { color:#65738d; font-size:12px; margin-left:auto; }
 .scope-note,.metric-note { border:1px solid #293b5b; background:#0d1729; color:#71809a; border-radius:7px; padding:8px 10px; margin:-3px 0 10px; font-size:12px; line-height:1.5; }.metric-note { display:flex; gap:8px; border-color:#554526; background:#201b14; }.metric-note b { color:#e8b766; }.metric-note span { color:#9e927d; }

@@ -86,6 +86,10 @@ export const marketApi = {
   getNationalEtf() {
     return api.get('/market/national-etf/', marketTimeout)
   },
+  // 区间资金流向需逐只拉取 18 只 ETF 的历史资金流，冷启动较慢
+  getNationalEtfFlow(period) {
+    return api.get('/market/national-etf/flow/', { timeout: 180000, params: { period } })
+  },
   getEtfRadar(params = {}) {
     return api.get('/market/etf-radar/', { ...marketTimeout, params })
   },

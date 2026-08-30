@@ -168,6 +168,60 @@ class MarketCacheFreshnessTests(SimpleTestCase):
             self.assertTrue(market._is_fresh(time() - 10, ttl=60))
 
 
+class NationalEtfFlowTests(SimpleTestCase):
+    """国家队 ETF 区间资金流：ETF 行解析、窗口聚合与缓存。"""
+
+    def setUp(self):
+        market._cache.clear()
+
+    def test_parse_kline_etf_schema(self):
+        # 东财 ETF 资金流行：日期,主力,小单,中单,大单,超大单,各占比,收盘,涨跌幅
+        row = ('2026-08-28,244913792.0,-66497392.0,-178416395.0,-124100400.0,'
+               '369014192.0,8.64,-2.35,-6.29,-4.38,13.02,4.679,-0.26,0.00,0.00')
+        parsed = market.etf_flow._parse_kline(row)
+
+        self.assertEqual(parsed['date'], '2026-08-28')
+        self.assertEqual(parsed['main_net'], 244913792.0)
+        # 主力 = 超大单 + 大单
+        self.assertAlmostEqual(parsed['main_net'], parsed['super_net'] + parsed['large_net'], places=5)
+        self.assertEqual(parsed['close'], 4.679)
+        self.assertEqual(parsed['change_pct'], -0.26)
+
+    def test_short_kline_row_is_skipped(self):
+        self.assertIsNone(market.etf_flow._parse_kline('2026-08-28,1.0,2.0'))
+
+    @patch('stocks.market.etf_flow._FLOW_FETCH_INTERVAL', 0)
+    @patch('stocks.market.etf_flow.flow_history')
+    def test_flow_aggregation_sums_window_and_caches(self, mock_hist):
+        from datetime import date, timedelta
+
+        d1 = (date.today() - timedelta(days=1)).isoformat()
+        d2 = date.today().isoformat()
+
+        def rows_for(main_net):
+            base = {'small_net': None, 'mid_net': None, 'large_net': None, 'super_net': None}
+            return [
+                {'date': d1, 'main_net': 100.0, 'close': 1.0, 'change_pct': 0.0, **base},
+                {'date': d2, 'main_net': main_net, 'close': 1.1, 'change_pct': 1.0, **base},
+            ]
+
+        mock_hist.side_effect = lambda code: rows_for(1_000_000.0 if code == '510050' else -500_000.0)
+        data = market.get_national_team_flow(period='1w')
+
+        self.assertTrue(data['available'])
+        self.assertEqual(data['end'], d2)
+        top = data['items'][0]
+        self.assertEqual(top['code'], '510050')
+        self.assertEqual(top['total_main_net'], 1_000_100.0)
+        self.assertEqual(data['summary']['inflow_count'], 1)
+        self.assertEqual(data['summary']['outflow_count'], 17)
+        self.assertEqual(data['total_daily'][-1]['main_net'], -7_500_000.0)
+
+        calls = mock_hist.call_count
+        market.get_national_team_flow(period='1w')
+        self.assertEqual(mock_hist.call_count, calls)  # 第二次命中进程缓存
+
+
 class MarketApiValidationTests(SimpleTestCase):
     def test_invalid_etf_scope_returns_400(self):
         response = self.client.get('/api/market/etf-radar/?scope=bad')
@@ -214,6 +268,10 @@ class MarketApiValidationTests(SimpleTestCase):
 
     def test_invalid_trend_days_returns_400(self):
         response = self.client.get('/api/market/trend/?days=45')
+        self.assertEqual(response.status_code, 400)
+
+    def test_invalid_national_flow_period_returns_400(self):
+        response = self.client.get('/api/market/national-etf/flow/?period=bad')
         self.assertEqual(response.status_code, 400)
 
     def test_invalid_sector_page_returns_400(self):

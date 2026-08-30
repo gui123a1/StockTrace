@@ -22,7 +22,7 @@
 - 「机构持仓」来自季报汇总 / 股东变动统计 / 北向资金，非实时成交持仓。
 """
 
-from . import etf, flows, indices, institutions, overview, sectors  # noqa: F401
+from . import etf, etf_flow, flows, indices, institutions, overview, sectors  # noqa: F401
 from ._cache import _cache  # noqa: F401  tests 直接清空共享缓存
 from ._cache import _is_fresh  # noqa: F401  tests 使用
 from ._sources import get_source_health  # noqa: F401
@@ -33,6 +33,7 @@ from .etf import (
     get_etf_share_radar,
     get_national_team_etfs,
 )
+from .etf_flow import get_national_team_flow
 from .flows import (
     fetch_hsgt_flow,
     fetch_market_activity,
@@ -61,6 +62,7 @@ __all__ = [
     'get_market_trend',
     'get_sector_rotation',
     'get_national_team_etfs',
+    'get_national_team_flow',
     'get_etf_share_radar',
     'get_etf_detail',
     'get_institution_holdings',
