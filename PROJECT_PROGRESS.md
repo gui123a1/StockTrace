@@ -14,7 +14,8 @@
 | 已完成 | 项目与发布文档同步 | 根 `CLAUDE.md`、v1.02 `README.md` 和 `deploy/DEPLOY.md` 已补齐数据边界与验证命令 |
 | 已完成 | v1.02 源码快照同步 | 14 个行情中心一期源码文件与 `CLAUDE.md` 已同步，并通过 SHA256 一致性校验 |
 | 已完成 | 发布前验证 | Django 市场测试和前端生产构建均已通过；v1.02 同步文件已完成 SHA256 校验 |
-| 已完成 | 工程化改进（2026-08-30） | git 版本控制、ruff/eslint 静态检查、market 包拆分、板块页组件化、路由懒加载；**v1.02 快照尚未同步本轮改动**，下次发布时按快照同步规则执行 |
+| 已完成 | 工程化改进（2026-08-30） | git 版本控制、ruff/eslint 静态检查、market 包拆分、板块页组件化、路由懒加载；已推送 GitHub |
+| 已完成 | 发布流程切换为 git 标签 | deploy 模板移至根目录，两个快照目录退出 git（本地归档），基线提交打 `v1.02` 标签，新增根 README |
 
 ## 完成记录
 
@@ -27,7 +28,14 @@
 - **板块资金页组件化**：1175 行 `MarketSectors.vue` 拆出 `SectorFlowStage.vue`（资金流向舞台）与 `SectorInsights.vue`（解读/强弱面板），纯展示函数抽到 `utils/sectorFlow.js`，页面降至 575 行。验证：生产构建通过；浏览器实测 1280px/375px 渲染、板块切换交互、空数据兜底均正常。
 - **前端 lint**：接入 eslint 10 flat config（核心推荐 + vue essential，不做模板风格化）与 prettier 配置（仅 `npm run format`，未全量重排）；新增 `npm run lint`。修复 4 项：KlineChart computed 内副作用改为派生 computed、MarketEtfRadar 未用 watch、两个单词组件名按 views 目录豁免。
 - **安全边界说明**：`settings.py` DRF 段写明 AllowAny + 无 CSRF 依赖 Nginx Basic Auth 的三条红线。
-- 遗留：`StockTrace v1.02/` 快照为发布动作，本轮改动未同步；下次发布按 CLAUDE.md 快照同步规则执行。
+### 2026-08-30：发布流程切换为 git 标签，快照目录退役
+
+- `StockTrace v1.02/deploy/` 上移为根目录 `deploy/`（nginx / systemd / gunicorn / env 示例 + `DEPLOY.md`）。
+- `StockTrace v1.01/`、`StockTrace v1.02/` 执行 `git rm -r --cached` 退出版本库（本地文件保留归档），`.gitignore` 增加 `StockTrace v*/`。
+- 基线提交 `390c308` 打注释标签 `v1.02`（其内容即 v1.02 发布状态，唯一差异为 MarketSectors.vue 的格式重排）；今后发版 = 验证通过后在 main 上打 `vX.Y.Z` 标签并 `git push --follow-tags`。
+- 新增根 `README.md`（面向公开仓库的项目说明，改写自 v1.02 发布说明，保留功能清单、路由/API 与数据边界）。
+- 推送前全量审计跟踪文件：无密钥、无 IP 明文（`vps-download-notes.md` 为占位符）、无数据库/锁/依赖目录；两个快照目录是唯一不应入库的内容。
+- 验证：`git status` 干净、标签指向正确、`git push --follow-tags` 成功。
 
 ### 2026-08-03：发布范围审计
 

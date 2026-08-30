@@ -7,7 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 StockTrace is a personal A-share (中国 A 股) watchlist dashboard: Django REST API + Vue 3 SPA + SQLite. Deployed **manually** on a small **1H2G** VPS (Nginx + Gunicorn + systemd + Cloudflare Flexible SSL + HTTP Basic Auth).
 
 **Canonical code:** `backend/` and `frontend/`.  
-**Release snapshots:** `StockTrace v1.01/`, `StockTrace v1.02/` (publish artifacts + `deploy/` templates — not a second working tree).  
+**Deploy templates:** root `deploy/` (nginx / systemd / gunicorn / env example + `DEPLOY.md`).  
+**Releases:** annotated git tags (`vX.Y.Z`) on main — no directory snapshots. Local `StockTrace v*/` folders are legacy archives, git-ignored.  
 Handoff: prefer `handoff_cn.md`. `地址.md` may contain credentials — do not put secrets in a public remote.
 
 ## Commands
@@ -99,11 +100,11 @@ Django DRF (AllowAny; no CSRF — access control is Nginx Basic Auth)
 
 - App: `/opt/stocktrace` · Env: `/etc/stocktrace/env`
 - systemd `User=www` — **never set `user=` in Gunicorn**
-- Templates + steps: `StockTrace v1.02/deploy/`
+- Templates + steps: `deploy/`（根目录）
 - `STATIC_ROOT` hard-coded `/opt/stocktrace/staticfiles`
-- `StockTrace v1.02/` is a release snapshot. Update canonical `backend/` and
-  `frontend/` first, then copy source files into the snapshot without
-  `venv`, `node_modules`, `dist`, databases, secrets, or cache artifacts.
+- 发版 = git 标签：验证通过后在 main 上
+  `git tag -a vX.Y.Z -m "说明"`，推送用 `git push --follow-tags`。
+  不再维护目录快照（本地 `StockTrace v*/` 仅为历史归档，已忽略）。
 
 ## Scheduler
 
