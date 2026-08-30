@@ -33,6 +33,7 @@
 - `StockTrace v1.02/deploy/` 上移为根目录 `deploy/`（nginx / systemd / gunicorn / env 示例 + `DEPLOY.md`）。
 - `StockTrace v1.01/`、`StockTrace v1.02/` 执行 `git rm -r --cached` 退出版本库（本地文件保留归档），`.gitignore` 增加 `StockTrace v*/`。
 - 基线提交 `390c308` 打注释标签 `v1.02`（其内容即 v1.02 发布状态，唯一差异为 MarketSectors.vue 的格式重排）；今后发版 = 验证通过后在 main 上打 `vX.Y.Z` 标签并 `git push --follow-tags`。
+- 基线标签规范化：`v1.02` 已重命名为 `v1.2.0`（同一提交 `390c308`，标签说明原文保留并注明改名），对齐 SemVer 三段式；今后版本从 `v1.2.x` / `v1.3.0` 接续升版。
 - 新增根 `README.md`（面向公开仓库的项目说明，改写自 v1.02 发布说明，保留功能清单、路由/API 与数据边界）。
 - 推送前全量审计跟踪文件：无密钥、无 IP 明文（`vps-download-notes.md` 为占位符）、无数据库/锁/依赖目录；两个快照目录是唯一不应入库的内容。
 - 验证：`git status` 干净、标签指向正确、`git push --follow-tags` 成功。
