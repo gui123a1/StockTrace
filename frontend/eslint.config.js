@@ -28,4 +28,13 @@ export default [
       'vue/multi-word-component-names': 'off',
     },
   },
+  // vite.config.js 运行在 Node 环境
+  {
+    files: ['vite.config.js'],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
+  },
 ]
