@@ -1,0 +1,6 @@
+django>=4.2,<7.0
+djangorestframework>=3.14
+django-cors-headers>=4.0
+apscheduler>=3.10
+akshare>=1.14
+baostock>=0.9

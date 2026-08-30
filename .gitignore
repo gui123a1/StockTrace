@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+
+# Django 运行产物
+db.sqlite3
+backend/scheduler.lock
+
+# 环境变量与密钥
+.env
+地址.md
+
+# 前端
+node_modules/
+frontend/dist/
+
+# 本地工具与草稿
+.claude/
+.reference-sector-flow.jpg
+.sector-desktop.png
+
+# OS
+.DS_Store
+Thumbs.db
