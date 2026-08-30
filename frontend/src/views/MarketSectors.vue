@@ -3,9 +3,12 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import MarketSubNav from '../components/MarketSubNav.vue'
 import MarketDataStatus from '../components/MarketDataStatus.vue'
+import SectorFlowStage from '../components/SectorFlowStage.vue'
+import SectorInsights from '../components/SectorInsights.vue'
 import { marketApi } from '../api/stocks.js'
 import { formatDateTime, formatPct, pctClass } from '../utils/format.js'
 import { formatAmount } from '../utils/marketFormat.js'
+import { signedAmount } from '../utils/sectorFlow.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -25,81 +28,6 @@ const pagination = computed(() => data.value?.pagination || {
   total_pages: 1,
   total: 0,
 })
-const inflowRows = computed(() => (data.value?.inflow_top || []).slice(0, 5))
-const outflowRows = computed(() => (data.value?.outflow_top || []).slice(0, 5))
-const inflowTotal = computed(() => inflowRows.value.reduce((sum, row) => sum + Number(row.net || 0), 0))
-const outflowTotal = computed(() => outflowRows.value.reduce((sum, row) => sum + Number(row.net || 0), 0))
-const netTone = computed(() => {
-  const value = Number(summary.value.net_total || 0)
-  if (value > 0) return '净流入'
-  if (value < 0) return '净流出'
-  return '资金平衡'
-})
-
-const insights = computed(() => {
-  const concentration = summary.value.top_three_inflow_concentration_pct
-  const breadth = summary.value.breadth_pct
-  const divergenceCount = data.value?.divergences?.length || 0
-  return [
-    {
-      tone: 'green',
-      title: concentration == null ? '集中度待更新' : concentration >= 65 ? '主线集中' : '轮动较均衡',
-      body: concentration == null
-        ? '当前上游未提供可计算样本。'
-        : `流入前三集中度 ${concentration.toFixed(1)}%，${concentration >= 65 ? '资金更偏向少数主线。' : '资金分布相对均衡。'}`,
-    },
-    {
-      tone: 'amber',
-      title: breadth == null ? '广度待更新' : breadth >= 50 ? '流入占优' : '流出占优',
-      body: breadth == null
-        ? '当前上游未提供可计算样本。'
-        : `资金广度 ${breadth.toFixed(1)}%，${breadth >= 50 ? '净流入板块占多数。' : '净流出板块占多数。'}`,
-    },
-    {
-      tone: 'blue',
-      title: divergenceCount ? '存在价流背离' : '价流暂未背离',
-      body: divergenceCount
-        ? `发现 ${divergenceCount} 个显著价流背离板块，需结合后续价格确认。`
-        : '当前横截面未发现显著价流背离。',
-    },
-  ]
-})
-
-function signedAmount(value) {
-  const result = formatAmount(value)
-  return Number(value) > 0 && result !== '-' ? `+${result}` : result
-}
-
-function metricWidth(value) {
-  if (value == null || Number.isNaN(Number(value))) return '0%'
-  return `${Math.min(100, Math.max(0, Number(value)))}%`
-}
-
-function barWidth(row, side) {
-  const rows = side === 'in' ? inflowRows.value : outflowRows.value
-  const maximum = Math.max(...rows.map(item => Math.abs(Number(item.net || 0))), 0)
-  if (!maximum) return '0%'
-  return `${Math.max(4, Math.abs(Number(row.net || 0)) / maximum * 100)}%`
-}
-
-function flowPath(side, index) {
-  const rowY = 88 + index * 52
-  const hubY = 164 + index * 10
-  return side === 'out'
-    ? `M 430 ${rowY} C 474 ${rowY}, 466 ${hubY}, 505 ${hubY}`
-    : `M 695 ${hubY} C 734 ${hubY}, 726 ${rowY}, 770 ${rowY}`
-}
-
-function rowTitle(row) {
-  return [
-    row.name,
-    `净额 ${signedAmount(row.net)}`,
-    `流入 ${formatAmount(row.inflow)}`,
-    `流出 ${formatAmount(row.outflow)}`,
-    `涨跌 ${formatPct(row.change_pct)}`,
-    `领涨 ${row.leader || '-'} ${formatPct(row.leader_pct)}`,
-  ].join('\n')
-}
 
 async function load(reset = false) {
   if (reset) page.value = 1
@@ -203,89 +131,9 @@ onMounted(load)
       <div><span>资金广度</span><strong>{{ formatPct(summary.breadth_pct) }}</strong></div>
       <div><span>前三集中度</span><strong>{{ formatPct(summary.top_three_inflow_concentration_pct) }}</strong></div>
     </section>
-    <section class='flow-shell'>
-      <div class='flow-shell-header'>
-        <div>
-          <span class='eyebrow'>资金流向</span>
-          <h2>{{ board === 'industry' ? '行业' : '概念' }}板块前五强弱</h2>
-        </div>
-        <span class='method-label'>当日横截面</span>
-      </div>
 
-      <div v-if='loading && !data' class='flow-loading'>正在加载板块资金...</div>
-      <div v-else class='flow-stage'>
-        <svg class='flow-lines' viewBox='0 0 1200 360' preserveAspectRatio='none' aria-hidden='true'>
-          <path v-for='(_, index) in outflowRows' :key='`out-${index}`' class='line-out' :d='flowPath(`out`, index)' />
-          <path v-for='(_, index) in inflowRows' :key='`in-${index}`' class='line-in' :d='flowPath(`in`, index)' />
-        </svg>
-
-        <div class='flow-column flow-column-out'>
-          <div class='column-heading'>
-            <div><span>净流出板块</span><small>前五合计</small></div>
-            <strong class='down'>{{ signedAmount(outflowTotal) }}</strong>
-          </div>
-          <div class='flow-list'>
-            <div v-for='(row, index) in outflowRows' :key='row.name' class='flow-row' :title='rowTitle(row)'>
-              <span class='rank rank-out'>{{ String(index + 1).padStart(2, '0') }}</span>
-              <div class='flow-name'><b>{{ row.name }}</b><small>{{ row.leader || '暂无领涨股' }}</small></div>
-              <div class='flow-track'><i class='flow-fill' :style='{ width: barWidth(row, `out`) }'></i></div>
-              <strong class='flow-value down'>{{ signedAmount(row.net) }}</strong>
-            </div>
-          </div>
-        </div>
-        <div class='flow-core-wrap'>
-          <div class='flow-core'>
-            <span class='flow-symbol' aria-hidden='true'>⇄</span>
-            <small>{{ netTone }}</small>
-            <strong :class='pctClass(summary.net_total)'>{{ signedAmount(summary.net_total) }}</strong>
-            <span>板块净额</span>
-          </div>
-        </div>
-
-        <div class='flow-column flow-column-in'>
-          <div class='column-heading'>
-            <div><span>净流入板块</span><small>前五合计</small></div>
-            <strong class='up'>{{ signedAmount(inflowTotal) }}</strong>
-          </div>
-          <div class='flow-list'>
-            <div v-for='(row, index) in inflowRows' :key='row.name' class='flow-row' :title='rowTitle(row)'>
-              <span class='rank rank-in'>{{ String(index + 1).padStart(2, '0') }}</span>
-              <div class='flow-name'><b>{{ row.name }}</b><small>{{ row.leader || '暂无领涨股' }}</small></div>
-              <div class='flow-track'><i class='flow-fill' :style='{ width: barWidth(row, `in`) }'></i></div>
-              <strong class='flow-value up'>{{ signedAmount(row.net) }}</strong>
-            </div>
-          </div>
-        </div>
-        <div v-if='!outflowRows.length && !inflowRows.length' class='flow-empty'>暂无资金流向数据</div>
-      </div>
-
-      <footer class='flow-footnote'>
-        <span aria-hidden='true'>ⓘ</span>
-        <p>{{ data?.methodology || '板块资金为上游当日聚合强弱指标，不代表板块之间的真实资金转移路径。' }}</p>
-      </footer>
-    </section>
-    <section class='insight-panel'>
-      <h2>解读</h2>
-      <div class='insight-grid'>
-        <article v-for='(item, index) in insights' :key='item.title'>
-          <span class='insight-index' :class='item.tone'>{{ index + 1 }}</span>
-          <div><strong>{{ item.title }}</strong><p>{{ item.body }}</p></div>
-        </article>
-      </div>
-    </section>
-
-    <section class='strength-panel'>
-      <div class='strength-item'>
-        <div class='strength-heading'><span>轮动广度</span><strong>{{ formatPct(summary.breadth_pct) }}</strong></div>
-        <div class='meter'><i class='breadth-meter' :style='{ width: metricWidth(summary.breadth_pct) }'></i></div>
-        <p>{{ Number(summary.breadth_pct) >= 50 ? '净流入板块占多数，市场扩散度较高。' : '净流出板块占多数，市场扩散度偏弱。' }}</p>
-      </div>
-      <div class='strength-item'>
-        <div class='strength-heading'><span>拥挤程度</span><strong>{{ formatPct(summary.top_three_inflow_concentration_pct) }}</strong></div>
-        <div class='meter'><i class='crowding-meter' :style='{ width: metricWidth(summary.top_three_inflow_concentration_pct) }'></i></div>
-        <p>{{ Number(summary.top_three_inflow_concentration_pct) >= 65 ? '流入集中于少数主线，注意拥挤风险。' : '主线集中度适中，资金分布相对均衡。' }}</p>
-      </div>
-    </section>
+    <SectorFlowStage :board='board' :loading='loading' :data='data' />
+    <SectorInsights :summary='summary' :divergence-count='data?.divergences?.length || 0' />
 
     <section v-if='data?.divergences?.length' class='divergences'>
       <div class='section-title'><h2>价流背离</h2><span>{{ data.divergences.length }} 个板块</span></div>
@@ -353,8 +201,6 @@ onMounted(load)
 
 .title-row,
 .header-meta,
-.column-heading,
-.strength-heading,
 .section-title,
 .table-title,
 .pager {
@@ -377,8 +223,7 @@ onMounted(load)
   font-size: 13px;
 }
 
-.live-badge,
-.method-label {
+.live-badge {
   border: 1px solid #2e4251;
   border-radius: 4px;
   color: #8fc6d6;
@@ -517,9 +362,6 @@ button:disabled {
   font-size: 15px;
 }
 
-.flow-shell,
-.insight-panel,
-.strength-panel,
 .divergences,
 .table-card {
   margin-bottom: 10px;
@@ -528,359 +370,10 @@ button:disabled {
   background: #0c141c;
 }
 
-.flow-shell-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 14px;
-  border-bottom: 1px solid #25323c;
-}
-
-.eyebrow {
-  display: block;
-  margin-bottom: 2px;
-  color: #70808e;
-  font-size: 10px;
-}
-
-.flow-shell h2,
-.insight-panel h2,
 .section-title h2,
 .table-title h2 {
   margin: 0;
   font-size: 14px;
-}
-
-.flow-stage {
-  position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 190px minmax(0, 1fr);
-  min-height: 342px;
-  padding: 12px 10px 14px;
-  overflow: hidden;
-}
-
-.flow-lines {
-  position: absolute;
-  z-index: 0;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-}
-
-.flow-lines path {
-  fill: none;
-  stroke-width: 1.3;
-  vector-effect: non-scaling-stroke;
-}
-
-.line-out {
-  stroke: #347b63;
-}
-
-.line-in {
-  stroke: #8a4248;
-}
-
-.flow-column,
-.flow-core-wrap {
-  position: relative;
-  z-index: 1;
-}
-
-.flow-column {
-  min-width: 0;
-}
-
-.column-heading {
-  justify-content: space-between;
-  min-height: 48px;
-  padding: 0 8px;
-}
-
-.column-heading span,
-.column-heading small {
-  display: block;
-}
-
-.column-heading span {
-  color: #dbe4eb;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.column-heading small {
-  margin-top: 2px;
-  color: #677581;
-  font-size: 10px;
-}
-
-.column-heading > strong {
-  font-size: 13px;
-}
-
-.flow-list {
-  display: grid;
-  gap: 4px;
-}
-
-.flow-row {
-  display: grid;
-  grid-template-columns: 28px minmax(68px, .7fr) minmax(80px, 1.25fr) 82px;
-  gap: 8px;
-  align-items: center;
-  min-height: 48px;
-  padding: 4px 8px;
-}
-
-.rank {
-  display: grid;
-  width: 27px;
-  height: 23px;
-  place-items: center;
-  border: 1px solid #31424d;
-  border-radius: 4px;
-  color: #7f8d99;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 10px;
-}
-
-.rank-out {
-  border-color: #285b4d;
-  color: #6fc6a4;
-}
-
-.rank-in {
-  border-color: #66363b;
-  color: #e78990;
-}
-
-.flow-name {
-  min-width: 0;
-}
-
-.flow-name b,
-.flow-name small {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.flow-name b {
-  color: #dce5ec;
-  font-size: 12px;
-}
-
-.flow-name small {
-  margin-top: 2px;
-  color: #687682;
-  font-size: 9px;
-}
-
-.flow-track {
-  height: 6px;
-  overflow: hidden;
-  border-radius: 3px;
-  background: #1d2831;
-}
-
-.flow-fill {
-  display: block;
-  min-width: 3px;
-  height: 100%;
-  border-radius: inherit;
-}
-
-.flow-column-out .flow-fill {
-  margin-left: auto;
-  background: #64be9c;
-}
-
-.flow-column-in .flow-fill {
-  background: #db666d;
-}
-
-.flow-value {
-  text-align: right;
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.flow-core-wrap {
-  display: grid;
-  place-items: center;
-}
-
-.flow-core {
-  display: grid;
-  width: 150px;
-  min-height: 112px;
-  place-items: center;
-  align-content: center;
-  border: 1px solid #31526a;
-  border-radius: 7px;
-  background: #101b27;
-  box-shadow: 0 0 0 5px rgba(23, 52, 69, .18);
-}
-
-.flow-symbol {
-  color: #55a8d5;
-  font-size: 23px;
-  line-height: 1;
-}
-
-.flow-core small,
-.flow-core > span:last-child {
-  color: #738390;
-  font-size: 10px;
-}
-
-.flow-core strong {
-  margin: 3px 0;
-  font-size: 21px;
-}
-
-.flow-empty,
-.flow-loading {
-  display: grid;
-  min-height: 330px;
-  place-items: center;
-  color: #6d7a86;
-  font-size: 12px;
-}
-
-.flow-empty {
-  position: absolute;
-  z-index: 3;
-  inset: 0;
-}
-
-.flow-footnote {
-  display: flex;
-  gap: 7px;
-  align-items: flex-start;
-  border-top: 1px solid #25323c;
-  color: #687681;
-  padding: 9px 13px;
-  font-size: 10px;
-}
-
-.flow-footnote p {
-  margin: 0;
-}
-
-.insight-panel {
-  display: grid;
-  grid-template-columns: 74px 1fr;
-  align-items: stretch;
-}
-
-.insight-panel > h2 {
-  padding: 14px;
-  border-right: 1px solid #25323c;
-}
-
-.insight-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-}
-
-.insight-grid article {
-  display: flex;
-  gap: 10px;
-  min-width: 0;
-  padding: 12px 14px;
-  border-right: 1px solid #25323c;
-}
-
-.insight-grid article:last-child {
-  border-right: 0;
-}
-
-.insight-index {
-  display: grid;
-  width: 24px;
-  height: 24px;
-  flex: 0 0 24px;
-  place-items: center;
-  border-radius: 50%;
-  font-size: 10px;
-}
-
-.insight-index.green {
-  background: #173129;
-  color: #6bc09f;
-}
-
-.insight-index.amber {
-  background: #382a17;
-  color: #e1a84b;
-}
-
-.insight-index.blue {
-  background: #172c3b;
-  color: #63acd3;
-}
-
-.insight-grid strong {
-  display: block;
-  color: #d7e0e7;
-  font-size: 11px;
-}
-
-.insight-grid p,
-.strength-item p {
-  margin: 3px 0 0;
-  color: #71808c;
-  font-size: 10px;
-  line-height: 1.45;
-}
-
-.strength-panel {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-}
-
-.strength-item {
-  padding: 12px 16px;
-}
-
-.strength-item:first-child {
-  border-right: 1px solid #25323c;
-}
-
-.strength-heading {
-  justify-content: space-between;
-  margin-bottom: 7px;
-  font-size: 11px;
-}
-
-.strength-heading strong {
-  color: #dbe5ec;
-  font-size: 12px;
-}
-
-.meter {
-  height: 5px;
-  overflow: hidden;
-  border-radius: 3px;
-  background: #1e2932;
-}
-
-.meter i {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-}
-
-.breadth-meter {
-  background: #4b9fc9;
-}
-
-.crowding-meter {
-  background: #dfa13c;
 }
 
 .divergences {
@@ -1026,61 +519,6 @@ td.name {
     grid-column: 1 / -1;
     justify-self: stretch;
   }
-
-  .flow-stage {
-    grid-template-columns: minmax(0, 1fr) 160px minmax(0, 1fr);
-  }
-
-  .flow-row {
-    grid-template-columns: 26px minmax(62px, .8fr) minmax(56px, 1fr) 74px;
-    gap: 6px;
-    padding-inline: 5px;
-  }
-
-  .flow-core {
-    width: 132px;
-  }
-}
-
-@media (max-width: 900px) {
-  .flow-stage {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 6px 18px;
-  }
-
-  .flow-lines {
-    display: none;
-  }
-
-  .flow-core-wrap {
-    grid-column: 1 / -1;
-    grid-row: 1;
-    padding: 8px 0;
-  }
-
-  .flow-column-out {
-    grid-column: 1;
-    grid-row: 2;
-  }
-
-  .flow-column-in {
-    grid-column: 2;
-    grid-row: 2;
-  }
-
-  .flow-core {
-    width: 180px;
-    min-height: 96px;
-  }
-
-  .insight-panel {
-    grid-template-columns: 1fr;
-  }
-
-  .insight-panel > h2 {
-    border-right: 0;
-    border-bottom: 1px solid #25323c;
-  }
 }
 
 @media (max-width: 680px) {
@@ -1119,35 +557,6 @@ td.name {
     border-bottom: 1px solid #26343f;
   }
 
-  .flow-stage {
-    grid-template-columns: 1fr;
-  }
-
-  .flow-core-wrap,
-  .flow-column-out,
-  .flow-column-in {
-    grid-column: 1;
-  }
-
-  .flow-core-wrap { grid-row: 1; }
-  .flow-column-out { grid-row: 2; }
-  .flow-column-in { grid-row: 3; }
-
-  .insight-grid,
-  .strength-panel {
-    grid-template-columns: 1fr;
-  }
-
-  .insight-grid article,
-  .strength-item:first-child {
-    border-right: 0;
-    border-bottom: 1px solid #25323c;
-  }
-
-  .flow-row {
-    grid-template-columns: 28px minmax(72px, .75fr) minmax(75px, 1.2fr) 78px;
-  }
-
   .table-wrap {
     max-height: 480px;
   }
@@ -1161,15 +570,6 @@ td.name {
   .header-meta {
     flex-direction: row;
     justify-content: space-between;
-  }
-
-  .flow-row {
-    grid-template-columns: 25px 72px minmax(50px, 1fr) 72px;
-    gap: 5px;
-  }
-
-  .flow-name small {
-    display: none;
   }
 }
 </style>
