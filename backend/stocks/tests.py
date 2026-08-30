@@ -212,6 +212,10 @@ class MarketApiValidationTests(SimpleTestCase):
         response = self.client.get('/api/market/etfs/510300/?range=5y')
         self.assertEqual(response.status_code, 400)
 
+    def test_invalid_trend_days_returns_400(self):
+        response = self.client.get('/api/market/trend/?days=45')
+        self.assertEqual(response.status_code, 400)
+
     def test_invalid_sector_page_returns_400(self):
         response = self.client.get('/api/market/sectors/?page=0')
         self.assertEqual(response.status_code, 400)

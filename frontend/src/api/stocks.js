@@ -77,8 +77,8 @@ export const marketApi = {
   getOverview() {
     return api.get('/market/', marketTimeout)
   },
-  getTrend() {
-    return api.get('/market/trend/', marketTimeout)
+  getTrend(params = {}) {
+    return api.get('/market/trend/', { ...marketTimeout, params })
   },
   getSectors(params = {}) {
     return api.get('/market/sectors/', { ...marketTimeout, params })

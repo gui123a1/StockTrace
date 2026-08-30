@@ -25,9 +25,12 @@ use([
 
 const COLORS = ['#e94560', '#4fc3f7', '#ffb74d', '#81c784', '#ba68c8']
 
+const DAYS_OPTIONS = [30, 60, 120, 250]
+
 const loading = ref(false)
 const error = ref('')
 const data = ref(null)
+const days = ref(120)
 
 const seriesList = computed(() => data.value?.series || [])
 
@@ -97,7 +100,7 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const res = await marketApi.getTrend()
+    const res = await marketApi.getTrend({ days: days.value })
     data.value = res.data
   } catch (e) {
     console.error(e)
@@ -105,6 +108,12 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+function setDays(value) {
+  if (days.value === value) return
+  days.value = value
+  load()
 }
 
 onMounted(load)
@@ -117,7 +126,7 @@ onMounted(load)
       <div>
         <h1>全市场走势</h1>
         <p class="sub">
-          近 {{ data?.days || 120 }} 交易日归一化对比（首日=0%）
+          近 {{ data?.days || days }} 交易日归一化对比（首日=0%）
           <span v-if="data?.updated_at"> · {{ data.updated_at }}</span>
         </p>
       </div>
@@ -127,6 +136,18 @@ onMounted(load)
     </div>
 
     <div v-if="error" class="error-box">{{ error }}</div>
+
+    <div class="range-bar">
+      <span class="range-label">时间范围</span>
+      <button
+        v-for="d in DAYS_OPTIONS"
+        :key="d"
+        class="range-btn"
+        :class="{ active: days === d }"
+        :disabled="loading"
+        @click="setDays(d)"
+      >{{ d }}日</button>
+    </div>
 
     <section class="section">
       <v-chart
@@ -175,6 +196,24 @@ onMounted(load)
   cursor: pointer;
 }
 .btn:disabled { opacity: 0.6; }
+.range-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.range-label { color: #888; font-size: 12px; margin-right: 4px; }
+.range-btn {
+  padding: 5px 12px;
+  border: 1px solid #2b3947;
+  border-radius: 5px;
+  background: #121b24;
+  color: #9eabb8;
+  cursor: pointer;
+  font-size: 12px;
+}
+.range-btn.active { border-color: #327495; background: #163649; color: #e9f7ff; }
+.range-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .error-box {
   background: #3a1520;
   color: #ff8a9a;

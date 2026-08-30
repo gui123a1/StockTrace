@@ -265,8 +265,13 @@ def market_overview(request):
 
 @api_view(['GET'])
 def market_trend(request):
-    """全市场走势：多指数归一化对比"""
-    return _market_response(get_market_trend, '全市场走势')
+    """全市场走势：多指数归一化对比；?days=30|60|120|250"""
+    def load():
+        days = _positive_int(request, 'days', 120)
+        if days not in (30, 60, 120, 250):
+            raise ValueError('days 仅支持 30、60、120、250')
+        return get_market_trend(days=days)
+    return _market_bad_request(load)
 
 
 def _positive_int(request, key, default, maximum=None):

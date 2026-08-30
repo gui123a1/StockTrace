@@ -77,10 +77,10 @@ def get_market_overview():
     }
 
 
-def get_market_trend():
+def get_market_trend(days=120):
     return {
         'updated_at': _now_str(),
-        **fetch_index_trend(days=120),
+        **fetch_index_trend(days=days),
     }
 
 
