@@ -503,6 +503,10 @@ def fetch_daily_data(stock, start_date=None, end_date=None):
     for _, row in df.iterrows():
         try:
             trade_date = pd.to_datetime(row['日期']).date()
+            # 价格缺失（NaN）的行跳过：Decimal('nan') 不抛错会污染库，价格缺失的日K也无意义
+            if not all(pd.notna(row[k]) for k in ('开盘', '收盘', '最高', '最低')):
+                logger.warning(f"{stock.code} {trade_date} 日线价格缺失，跳过该行")
+                continue
             open_price = Decimal(str(row['开盘']))
             close_price = Decimal(str(row['收盘']))
             high_price = Decimal(str(row['最高']))
@@ -581,6 +585,10 @@ def fetch_minute_data(stock, trade_date=None):
     for _, row in df.iterrows():
         try:
             dt = pd.to_datetime(row['时间'])
+            # 价格缺失（NaN）的行跳过：Decimal('nan') 不抛错会污染库
+            if not all(pd.notna(row[k]) for k in ('开盘', '收盘', '最高', '最低')):
+                logger.warning(f"{stock.code} {dt} 分钟价格缺失，跳过该行")
+                continue
             MinuteBar.objects.update_or_create(
                 stock=stock,
                 datetime=dt,
