@@ -9,6 +9,7 @@ from django.utils import timezone
 
 from . import market
 from . import tasks
+from .market._cache import _cache_get, _cache_set
 
 
 class MarketParsingTests(SimpleTestCase):
@@ -502,3 +503,29 @@ class UpstreamTimeoutSettingsTests(SimpleTestCase):
     def test_default_socket_timeout_is_set(self):
         self.assertIsNotNone(socket.getdefaulttimeout())
         self.assertGreater(socket.getdefaulttimeout(), 0)
+
+
+class MarketCacheLruTests(SimpleTestCase):
+    """进程内缓存必须有条目上限：部分 key 含用户可控输入，防内存无界增长。"""
+
+    def setUp(self):
+        market._cache.clear()
+
+    def tearDown(self):
+        market._cache.clear()
+
+    def test_cache_evicts_oldest_beyond_limit(self):
+        for i in range(257):
+            _cache_set(f'k{i}', {'i': i})
+        self.assertNotIn('k0', market._cache)
+        self.assertIn('k256', market._cache)
+        self.assertLessEqual(len(market._cache), 256)
+
+    def test_rewritten_entry_survives_eviction(self):
+        _cache_set('old', 1)
+        for i in range(255):
+            _cache_set(f'k{i}', i)
+        _cache_set('old', 2)  # 重写视为最近使用
+        _cache_set('k255', 3)  # 超限淘汰最旧的 k0 而非 old
+        self.assertNotIn('k0', market._cache)
+        self.assertEqual(_cache_get('old', ttl=60), 2)

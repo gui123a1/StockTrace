@@ -11,12 +11,16 @@ from __future__ import annotations
 
 import sys
 import time
+from collections import OrderedDict
 from datetime import datetime, time as dt_time, timedelta
 from decimal import InvalidOperation
 
 import pandas as pd
 
-_cache = {}
+# 进程内缓存条目上限（LRU）：部分 key 含用户可控输入（个股代码、自定义区间日期），
+# 无上限时可被异常/恶意请求撑爆内存（1H2G 红线）
+_CACHE_MAX_ENTRIES = 256
+_cache = OrderedDict()
 _calendar_memo = {'close': None, 'at': 0.0}
 
 
@@ -36,6 +40,9 @@ def _cache_get(key, ttl):
 
 def _cache_set(key, data):
     _cache[key] = {'ts': time.time(), 'data': data}
+    _cache.move_to_end(key)
+    while len(_cache) > _CACHE_MAX_ENTRIES:
+        _cache.popitem(last=False)
 
 
 def _stale_or(key, default):
