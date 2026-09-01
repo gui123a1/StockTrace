@@ -96,6 +96,12 @@ DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'db.sqlite3',
+        # 调度线程写库与 REST 读线程并发：WAL 读写不互斥，timeout 放宽锁等待，
+        # 避免 "database is locked" 500
+        'OPTIONS': {
+            'timeout': 20,
+            'init_command': 'PRAGMA journal_mode=WAL;',
+        },
     }
 }
 
