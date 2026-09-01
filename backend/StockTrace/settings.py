@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 
 from pathlib import Path
 import os
+import socket
 
 from django.core.exceptions import ImproperlyConfigured
 
@@ -40,6 +41,11 @@ if not SECRET_KEY:
 
 _allowed = os.environ.get('DJANGO_ALLOWED_HOSTS', '')
 ALLOWED_HOSTS = [h.strip() for h in _allowed.split(',') if h.strip()]
+
+# 上游请求（akshare 内部的 requests/urllib）大多不传 timeout，默认无限等待：
+# 一旦上游不响应，后台拉取线程与 2 线程 gunicorn 的请求线程都会被挂死。
+# 进程级 socket 默认超时兜底，未显式传 timeout 的调用一律继承此值。
+socket.setdefaulttimeout(int(os.environ.get('STOCKTRACE_UPSTREAM_TIMEOUT', '30')))
 
 
 # Application definition
