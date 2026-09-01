@@ -70,7 +70,7 @@ npm run lint && npm run build   # eslint（vue essential 档）+ 产物到 dist/
 1. **数据诚信**：外部源失败→报 unavailable/stale 并降级下一源，**绝不合成数值；未知= `null`，不是 0**；没有历史数据的功能明确标"待积累"，不做伪造。
 2. **安全模型**：DRF AllowAny + 无 CSRF，访问控制全靠 Nginx Basic Auth（settings.py 有红线注释）。8000/8001 绝不对公网暴露；systemd `User=www` 下 **Gunicorn 禁止设 user=**。
 3. **1H2G 红线**：Gunicorn 1 worker 2 线程；不要加 worker；自选 ≤ ~20 只；前端 60s 轮询。
-4. **发版 = git 标签**：验证通过后 `git tag -a vX.Y.Z`（SemVer，当前 v1.2.0）+ `git push --follow-tags`；不再维护目录快照。
+4. **发版 = git 标签**：验证通过后 `git tag -a vX.Y.Z`（SemVer，当前 v1.2.1）+ `git push --follow-tags`；不再维护目录快照。
 5. **密钥绝不入库**：`.env`、`地址.md`、db、scheduler.lock 已 gitignore；推送前扫描。
 6. **本地环境坑**：本机代理对 `push2his.eastmoney.com` 的 TLS 间歇性干扰——资金流抓取已内置 https 退避重试 + http 兜底（故意不走 akshare 的同源封装）；8000 端口被用户其他服务占用，后端用 8001。
 
