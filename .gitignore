@@ -11,6 +11,9 @@ backend/scheduler.lock
 .env
 地址.md
 
+# VPS 备份（可能含密钥/证书/数据库，绝不入库）
+vps-backup/
+
 # 前端
 node_modules/
 frontend/dist/
