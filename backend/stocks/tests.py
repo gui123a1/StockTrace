@@ -1,5 +1,6 @@
+import socket
 from datetime import date, datetime
-from time import time
+from time import monotonic, time
 from unittest.mock import patch
 
 import pandas as pd
@@ -7,6 +8,7 @@ from django.test import SimpleTestCase
 from django.utils import timezone
 
 from . import market
+from . import tasks
 
 
 class MarketParsingTests(SimpleTestCase):
@@ -437,3 +439,66 @@ class MarketApiValidationTests(SimpleTestCase):
     def test_invalid_sector_page_returns_400(self):
         response = self.client.get('/api/market/sectors/?page=0')
         self.assertEqual(response.status_code, 400)
+
+
+class FetchTaskWatchdogTests(SimpleTestCase):
+    """后台拉取任务看门狗：挂死线程不得永久阻塞新任务。"""
+
+    def setUp(self):
+        with tasks._lock:
+            self._orig_state = dict(tasks._state)
+            self._orig_started_at = tasks._started_at
+
+    def tearDown(self):
+        with tasks._lock:
+            tasks._state.clear()
+            tasks._state.update(self._orig_state)
+            tasks._started_at = self._orig_started_at
+
+    @staticmethod
+    def _claim_running(task):
+        with tasks._lock:
+            tasks._state.update(running=True, task=task, last_status='running')
+            tasks._started_at = monotonic()
+
+    def test_get_fetch_status_reports_running_seconds(self):
+        self._claim_running('one')
+        with tasks._lock:
+            tasks._started_at = monotonic() - 65
+        st = tasks.get_fetch_status()
+        self.assertTrue(st['running'])
+        self.assertGreaterEqual(st['running_seconds'], 60)
+
+    def test_fresh_running_task_not_recovered(self):
+        self._claim_running('all')
+        with tasks._lock:
+            tasks._started_at = monotonic() - 60
+            tasks._recover_stale_locked()
+            self.assertTrue(tasks._state['running'])
+            self.assertEqual(tasks._state['last_status'], 'running')
+
+    def test_stale_running_task_recovered_to_error(self):
+        self._claim_running('all')
+        with tasks._lock:
+            tasks._started_at = monotonic() - 31 * 60
+            tasks._recover_stale_locked()
+            self.assertFalse(tasks._state['running'])
+            self.assertEqual(tasks._state['last_status'], 'error')
+            self.assertIn('看门狗', tasks._state['last_error'])
+
+    def test_start_takes_over_stale_task(self):
+        self._claim_running('all')
+        with tasks._lock:
+            tasks._started_at = monotonic() - 31 * 60
+        with patch('stocks.tasks.threading.Thread') as thread_mock:
+            started, _ = tasks.start_fetch_one(1)
+        self.assertTrue(started)
+        thread_mock.assert_called_once()
+
+
+class UpstreamTimeoutSettingsTests(SimpleTestCase):
+    """settings 必须设进程级 socket 默认超时，防上游无响应挂死线程。"""
+
+    def test_default_socket_timeout_is_set(self):
+        self.assertIsNotNone(socket.getdefaulttimeout())
+        self.assertGreater(socket.getdefaulttimeout(), 0)
