@@ -2,7 +2,7 @@
 
 > 面向接手者：先读 `CLAUDE.md`，再看这里的「待办与已知问题」。历史细节在 git log（本文件只留一行式索引），不要在此重复叙事。
 
-最后更新：2026-08-31
+最后更新：2026-09-01
 
 ## 当前状态
 
@@ -19,7 +19,8 @@
 1. **大盘资金流/北向区间的前端入口未接**：`/api/market/market-flow/`、`/api/market/northbound/` 后端已就绪并有测试，总览页资金卡与机构页北向卡仍是固定 30 天视图，复用 `PeriodPicker.vue` 接入即可。
 2. **日度快照积累（二期，用户已确认要做后暂停）**：板块 5/10/20 日轮动、ETF 份额 1/5/20 日变化需要新建 `MarketDailySnapshot` 类快照表 + 收盘后落库任务 + 回填；相关讨论见 git log 的 2026-08-30 记录。
 3. **已知环境问题（非代码）**：本机代理对 `push2his.eastmoney.com` TLS 间歇性干扰（资金流抓取已内置重试+http 兜底，线断时页面如实报错，点重试渐进收敛）；8000 端口被用户另一 uvicorn 服务占用，本地后端约定用 8001。VPS 国内线路不受影响。
-4. 小项：前端主包 gzip ~57 kB 可再分割；`handoff_cn.md`/`handoff.md` 为 v1.01 时代文档，仅考古。
+4. **HTTPS 回源 + 限流的 VPS 收尾**：`deploy/nginx-stocktrace.conf` 模板与 `deploy/DEPLOY.md` 第 5 节已就绪（80→443 跳转、Cloudflare Full (strict)、真实 IP 限流 10r/s burst 20），线上仍是 Flexible 明文回源；需在 VPS 执行 DEPLOY.md 第 5 节（签发 Origin 证书、替换 conf、CF 后台切 Full (strict)）后销项。
+5. 小项：前端主包 gzip ~57 kB 可再分割；`handoff_cn.md`/`handoff.md` 为 v1.01 时代文档，仅考古。
 
 ## 历史索引（细节看对应提交）
 
@@ -36,6 +37,7 @@
 | 2026-08-30 | 国家队 ETF 区间资金流（东财历史资金流，120 交易日深度） | `ee882ac` |
 | 2026-08-30 | 全站统一区间体系（periods.py；板块原生 5d/10d；大盘/北向窗口端点；机构季度） | `3ca2ea8` |
 | 2026-08-31 | 文档冷启动化（本文件与 CLAUDE.md 重构） | 见 git log |
+| 2026-09-01 | 安全审计修复：fail-closed 启动 / 搜索防正则 / WAL / 上游超时+拉取看门狗 / 缓存 LRU 上限+机构代码校验 / 回源 HTTPS+限流模板 | 见 git log |
 
 ## 数据-区间适配速查（详见 CLAUDE.md「行情 API 与区间体系」）
 
