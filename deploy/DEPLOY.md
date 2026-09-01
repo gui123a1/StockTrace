@@ -69,6 +69,8 @@ sudo nano /etc/stocktrace/env   # 填 SECRET_KEY、ALLOWED_HOSTS
 # 数据库
 cd /opt/stocktrace/backend
 source ../venv/bin/activate
+# 环境变量只对 systemd 进程自动生效，手动跑 manage.py 必须先加载：
+set -a; source /etc/stocktrace/env; set +a
 python manage.py migrate
 python manage.py collectstatic --noinput
 
@@ -111,6 +113,7 @@ cd /opt/stocktrace
 source venv/bin/activate
 pip install -r backend/requirements.txt
 cd backend
+set -a; source /etc/stocktrace/env; set +a   # 手动 manage.py 必须加载环境变量
 python manage.py test stocks
 python manage.py migrate
 python manage.py collectstatic --noinput
@@ -138,8 +141,9 @@ sudo systemctl status stocktrace
 sudo systemctl restart stocktrace
 sudo journalctl -u stocktrace -f
 
-# 手动拉数（在 venv 内）
+# 手动拉数（在 venv 内；先加载环境变量）
 cd /opt/stocktrace/backend
+set -a; source /etc/stocktrace/env; set +a
 python manage.py fetch_stock_data --all
 
 # 只读校验 ETF/板块上游字段与单位；不写数据库、不修改缓存

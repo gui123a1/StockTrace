@@ -23,11 +23,13 @@ StockTrace：个人 A 股自选监控 + 行情中心。Django REST + SQLite（`b
 ```bash
 source venv/Scripts/activate            # Windows Git Bash
 cd backend
-python manage.py runserver 8001         # 本地 8000 常被占用；前端用 VITE_API_TARGET 指向对应端口
-python manage.py test stocks            # 全部测试（调度器自动跳过）
-python manage.py validate_market_sources  # 只读上游字段/数据源审计，不写库
+# 本地必须带 DJANGO_DEBUG=true：settings 缺省 DEBUG=False，且 DEBUG=False 时缺
+# DJANGO_SECRET_KEY 会拒绝启动（生产安全缺省，勿改回）
+DJANGO_DEBUG=true python manage.py runserver 8001  # 本地 8000 常被占用；前端用 VITE_API_TARGET 指向对应端口
+DJANGO_DEBUG=true python manage.py test stocks     # 全部测试（调度器自动跳过）
+DJANGO_DEBUG=true python manage.py validate_market_sources  # 只读上游字段/数据源审计，不写库
 python -m ruff check .                  # lint（ruff.toml：仅 E4/E7/E9/F）
-python manage.py fetch_stock_data --all # 手动拉自选行情（默认 light，full=1 更全）
+DJANGO_DEBUG=true python manage.py fetch_stock_data --all # 手动拉自选行情（默认 light，full=1 更全）
 
 cd frontend
 npm run dev        # 5173，/api 代理到 localhost:8000（VITE_API_TARGET 可覆盖）
