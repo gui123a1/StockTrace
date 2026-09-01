@@ -2,7 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view
 from rest_framework.response import Response
 from django.utils import timezone
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 
 from .models import Stock, DailyQuote, MinuteBar
 from .serializers import (
@@ -135,7 +135,6 @@ class StockViewSet(viewsets.ModelViewSet):
 
         # 按日期筛选
         if date_str := request.query_params.get('date'):
-            from datetime import datetime
             date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
             queryset = queryset.filter(trade_date=date_obj)
         elif days := request.query_params.get('days'):
@@ -168,7 +167,6 @@ class StockViewSet(viewsets.ModelViewSet):
         queryset = MinuteBar.objects.filter(stock=stock)
 
         if date_str := request.query_params.get('date'):
-            from datetime import datetime
             date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
             start = timezone.make_aware(
                 datetime.combine(date_obj, datetime.min.time())
@@ -279,7 +277,6 @@ def market_trend(request):
         end = request.query_params.get('end')
         days_raw = request.query_params.get('days')
         if start or end:
-            from datetime import date as date_cls, datetime, timedelta
             try:
                 start_d = datetime.strptime(start, '%Y-%m-%d').date() if start else None
                 end_d = datetime.strptime(end, '%Y-%m-%d').date() if end else timezone.localdate()
@@ -300,7 +297,7 @@ def market_trend(request):
         period_days = {'1w': 5, '1m': 22, '3m': 66, '6m': 130, '1y': 260}
         if period == 'ytd':
             today = timezone.localdate()
-            days = max(5, int((today - date_cls(today.year, 1, 1)).days * 5 / 7))
+            days = max(5, int((today - date(today.year, 1, 1)).days * 5 / 7))
         elif period in period_days:
             days = period_days[period]
         else:

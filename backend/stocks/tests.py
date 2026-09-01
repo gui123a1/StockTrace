@@ -4,7 +4,7 @@ from time import monotonic, time
 from unittest.mock import patch
 
 import pandas as pd
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 
 from . import market
@@ -543,3 +543,12 @@ class InstitutionCodeValidationTests(SimpleTestCase):
         for bad in ('AB12', '12345', '1234567'):
             with self.assertRaises(ValueError):
                 market.fetch_stock_institution_detail(bad)
+
+
+class TrendPeriodEndpointTests(SimpleTestCase):
+    """走势端点各档位不应因视图层缺陷 500/502。"""
+
+    @patch('stocks.views.get_market_trend', return_value={'series': []})
+    def test_trend_ytd_period_no_longer_502(self, _trend_mock):
+        response = self.client.get('/api/market/trend/?period=ytd')
+        self.assertEqual(response.status_code, 200)
