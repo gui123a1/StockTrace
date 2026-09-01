@@ -135,11 +135,28 @@ class StockViewSet(viewsets.ModelViewSet):
 
         # 按日期筛选
         if date_str := request.query_params.get('date'):
-            date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+            try:
+                date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+            except ValueError:
+                return Response(
+                    {'detail': 'date 格式应为 YYYY-MM-DD'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             queryset = queryset.filter(trade_date=date_obj)
-        elif days := request.query_params.get('days'):
-            days = int(days)
-            start_date = timezone.now().date() - timedelta(days=days)
+        elif days_raw := request.query_params.get('days'):
+            try:
+                days = int(days_raw)
+            except (TypeError, ValueError):
+                return Response(
+                    {'detail': 'days 必须是正整数'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if days < 1:
+                return Response(
+                    {'detail': 'days 必须是正整数'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            start_date = timezone.now().date() - timedelta(days=min(days, 3650))
             queryset = queryset.filter(trade_date__gte=start_date)
 
         queryset = queryset.order_by('-trade_date')
@@ -162,17 +179,25 @@ class StockViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'], url_path='minutes')
     def minute_bars(self, request, pk=None):
-        """获取分钟K线数据，支持 ?date=YYYY-MM-DD"""
+        """获取分钟K线数据，支持 ?date=YYYY-MM-DD；缺省返回最近一个交易日（防整表倒出）"""
         stock = self.get_object()
-        queryset = MinuteBar.objects.filter(stock=stock)
-
         if date_str := request.query_params.get('date'):
-            date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
-            start = timezone.make_aware(
-                datetime.combine(date_obj, datetime.min.time())
-            )
-            end = start + timedelta(days=1)
-            queryset = queryset.filter(datetime__range=(start, end))
+            try:
+                date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+            except ValueError:
+                return Response(
+                    {'detail': 'date 格式应为 YYYY-MM-DD'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        else:
+            latest = MinuteBar.objects.filter(stock=stock).order_by('-datetime').first()
+            if latest is None:
+                return Response([])
+            date_obj = timezone.localtime(latest.datetime).date()
+
+        start = timezone.make_aware(datetime.combine(date_obj, datetime.min.time()))
+        end = start + timedelta(days=1)
+        queryset = MinuteBar.objects.filter(stock=stock, datetime__range=(start, end))
 
         queryset = queryset.order_by('datetime')
         serializer = MinuteBarSerializer(queryset, many=True)

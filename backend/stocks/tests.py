@@ -552,3 +552,49 @@ class TrendPeriodEndpointTests(SimpleTestCase):
     def test_trend_ytd_period_no_longer_502(self, _trend_mock):
         response = self.client.get('/api/market/trend/?period=ytd')
         self.assertEqual(response.status_code, 200)
+
+
+class StockEndpointDbTests(TestCase):
+    """带数据库的日线/分钟端点行为。"""
+
+    def setUp(self):
+        from stocks.models import Stock
+        self.stock = Stock.objects.create(code='600000', name='浦发银行')
+
+    def test_invalid_daily_date_returns_400(self):
+        response = self.client.get(f'/api/stocks/{self.stock.id}/daily/?date=2026-13-99')
+        self.assertEqual(response.status_code, 400)
+
+    def test_invalid_daily_days_returns_400(self):
+        for bad in ('abc', '0', '-5'):
+            with self.subTest(days=bad):
+                response = self.client.get(f'/api/stocks/{self.stock.id}/daily/?days={bad}')
+                self.assertEqual(response.status_code, 400)
+
+    def test_invalid_minutes_date_returns_400(self):
+        response = self.client.get(f'/api/stocks/{self.stock.id}/minutes/?date=bad')
+        self.assertEqual(response.status_code, 400)
+
+    def test_minutes_without_date_returns_latest_day_only(self):
+        from datetime import datetime, timezone as tz
+        from stocks.models import MinuteBar
+        MinuteBar.objects.create(
+            stock=self.stock, datetime=datetime(2026, 8, 29, 9, 31, tzinfo=tz.utc),
+            open=1, close=1, high=1, low=1, volume=10,
+        )
+        MinuteBar.objects.create(
+            stock=self.stock, datetime=datetime(2026, 8, 30, 9, 31, tzinfo=tz.utc),
+            open=2, close=2, high=2, low=2, volume=20,
+        )
+        MinuteBar.objects.create(
+            stock=self.stock, datetime=datetime(2026, 8, 30, 9, 32, tzinfo=tz.utc),
+            open=3, close=3, high=3, low=3, volume=30,
+        )
+        response = self.client.get(f'/api/stocks/{self.stock.id}/minutes/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 2)  # 只返回最新一天（8-30 两根）
+
+    def test_minutes_empty_stock_returns_empty_list(self):
+        response = self.client.get(f'/api/stocks/{self.stock.id}/minutes/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, [])
