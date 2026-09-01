@@ -1,6 +1,6 @@
 # StockTrace v1.02 部署说明
 
-目标环境：Ubuntu 22.04，**1H2G** VPS，路径 `/opt/stocktrace`，Nginx + Gunicorn + systemd，Cloudflare Flexible SSL，HTTP Basic Auth。
+目标环境：Ubuntu 22.04，**1H2G** VPS，路径 `/opt/stocktrace`，Nginx + Gunicorn + systemd，Cloudflare Full (strict) SSL（回源加密 + Nginx 限流，见第 5 节），HTTP Basic Auth。
 
 本目录为**发布快照**（与仓库根目录 `backend/`、`frontend/` 同步的一份拷贝）。日常开发改根目录；部署时把本快照或 git 同步到 VPS。
 
@@ -94,7 +94,7 @@ sudo nginx -t && sudo systemctl reload nginx
 注意：
 
 - **Gunicorn 配置不要设 `user=`**，systemd 已是 `User=www`
-- Cloudflare SSL 模式：Flexible
+- Cloudflare SSL 模式：**Full (strict)**，需先配源站证书，见第 5 节
 - 域名改到你自己的 `server_name`
 
 ---
@@ -163,3 +163,54 @@ python manage.py validate_market_sources
 | Gunicorn workers | 保持 1；内存仍紧再降 threads |
 | 勿在 VPS 上 `npm run dev` | 只用 `dist` |
 | 勿提交 | `db.sqlite3`、`.env`、htpasswd、真实 SECRET_KEY |
+
+---
+
+## 5. HTTPS 回源 + Nginx 限流（安全加固）
+
+旧版为 Flexible SSL：浏览器→Cloudflare 是 HTTPS，但 **CF→源站回源是明文 HTTP**，
+Basic Auth 密码裸奔在公网链路上。现改为 **Full (strict)** + 源站证书 + 限流，
+配置模板已更新到 `nginx-stocktrace.conf`。已部署的旧版按下面步骤收尾：
+
+### 5.1 签发 Cloudflare Origin 证书（后台操作）
+
+Cloudflare Dashboard → SSL/TLS → Origin Server → Create Certificate，
+默认（RSA，15 年有效期，覆盖 `stocktrace.yumeat.cc.cd`）即可。把证书和私钥放到 VPS：
+
+```bash
+sudo mkdir -p /etc/ssl/stocktrace
+sudo nano /etc/ssl/stocktrace/origin.pem   # 粘贴 Origin Certificate
+sudo nano /etc/ssl/stocktrace/origin.key   # 粘贴 Private Key
+sudo chmod 600 /etc/ssl/stocktrace/origin.key
+```
+
+### 5.2 更新 Nginx 配置
+
+```bash
+sudo cp deploy/nginx-stocktrace.conf /etc/nginx/sites-available/stocktrace
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+新模板做的事：
+
+- **80 端口只做 301 跳转**，业务全走 443（`ssl_protocols TLSv1.2/1.3`）
+- **按 Cloudflare 真实 IP 限流**：`set_real_ip_from`（CF 网段，来源
+  [cloudflare.com/ips](https://www.cloudflare.com/ips/)，上游更新时需同步）+
+  `real_ip_header CF-Connecting-IP`，否则限流会把所有请求算到 CF 节点头上一刀切
+- `limit_req_zone $binary_remote_addr rate=10r/s`，`/api/` 与 `/admin/`
+  `burst=20 nodelay`，超限返回 429。正常看板 60s 轮询远低于阈值，只挡滥刷
+- 进一步可加防火墙：443 只放行 CF 网段、80/8000/8001 全封（服务器侧 ufw/安全组）
+
+### 5.3 切换 Cloudflare SSL 模式（后台操作）
+
+SSL/TLS → Overview → 改为 **Full (strict)**。
+
+验证：
+
+```bash
+curl -I https://stocktrace.yumeat.cc.cd/          # 200/401，不再是 526
+sudo tail -f /var/log/nginx/access.log            # 日志里的 IP 应是真实客户端 IP
+```
+
+注意：Origin 证书只被 Cloudflare 信任，浏览器直连源站 IP 会报证书错误——
+这正是预期（源站不该被绕过 CF 直接访问）。

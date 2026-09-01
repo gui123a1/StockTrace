@@ -54,4 +54,4 @@ npm run lint && npm run build
 
 ## 部署
 
-1H2G VPS：Nginx + Gunicorn（1 worker 2 线程）+ systemd，Cloudflare Flexible SSL。模板与步骤见 [`deploy/DEPLOY.md`](deploy/DEPLOY.md)。发版流程：验证通过后在 main 上打注释标签 `git tag -a vX.Y.Z` 并 `git push --follow-tags`。
+1H2G VPS：Nginx + Gunicorn（1 worker 2 线程）+ systemd，Cloudflare Full (strict) SSL + Nginx 限流 + Basic Auth。模板与步骤见 [`deploy/DEPLOY.md`](deploy/DEPLOY.md)。发版流程：验证通过后在 main 上打注释标签 `git tag -a vX.Y.Z` 并 `git push --follow-tags`。
