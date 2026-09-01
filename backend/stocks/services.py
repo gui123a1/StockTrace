@@ -806,7 +806,8 @@ def search_stocks(keyword, limit=20):
         return []
 
     kw = keyword.strip()
-    mask = df['name'].str.contains(kw, case=False, na=False) | \
-           df['code'].str.contains(kw, case=False, na=False)
+    # regex=False：关键词是用户输入，按字面匹配，避免非法/恶意正则 500 或回溯
+    mask = df['name'].str.contains(kw, case=False, na=False, regex=False) | \
+           df['code'].str.contains(kw, case=False, na=False, regex=False)
     matches = df[mask].head(limit)
     return matches.to_dict('records')
