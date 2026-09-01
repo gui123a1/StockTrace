@@ -529,3 +529,17 @@ class MarketCacheLruTests(SimpleTestCase):
         _cache_set('k255', 3)  # 超限淘汰最旧的 k0 而非 old
         self.assertNotIn('k0', market._cache)
         self.assertEqual(_cache_get('old', ttl=60), 2)
+
+
+class InstitutionCodeValidationTests(SimpleTestCase):
+    """机构明细的 code 参数是用户可控输入，非法值必须 400 而非打到上游。"""
+
+    def test_get_institution_holdings_rejects_bad_code(self):
+        for bad in ('AB12', '12345', '1234567', '12 456', '../x'):
+            with self.assertRaises(ValueError):
+                market.get_institution_holdings(stock_code=bad)
+
+    def test_fetch_stock_institution_detail_rejects_bad_code(self):
+        for bad in ('AB12', '12345', '1234567'):
+            with self.assertRaises(ValueError):
+                market.fetch_stock_institution_detail(bad)

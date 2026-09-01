@@ -47,6 +47,13 @@ def _normalize_quarter(raw):
     raise ValueError('quarter 格式应为 YYYYQn（如 2026Q1）')
 
 
+def _ensure_stock_code(code):
+    """code 是用户可控输入，且直接拼进缓存 key 与上游请求；
+    只放行 6 位数字，非法输入抛 ValueError（views 转 400）。"""
+    if not (str(code).isdigit() and len(str(code)) == 6):
+        raise ValueError('股票代码必须是 6 位数字')
+
+
 def fetch_institute_hold_stocks(limit=40, ttl=600, quarter=None):
     """
     机构持股汇总（按股票）：机构数、持股比例及变化。
@@ -270,6 +277,7 @@ def fetch_northbound_flow_series(days=60, ttl=300):
 
 def fetch_stock_institution_detail(code, ttl=600):
     """单只股票机构持仓明细 + 十大股东（可选查询）。"""
+    _ensure_stock_code(code)
     code = str(code).zfill(6)
     cache_key = f'inst_detail_{code}'
     cached = _cache_get(cache_key, ttl)
@@ -342,6 +350,8 @@ def fetch_stock_institution_detail(code, ttl=600):
 def get_institution_holdings(stock_code=None, quarter=None):
     """机构持仓专题页聚合。stock_code 可选，提供则附带个股明细；
     quarter（如 2026Q1）可选，指定机构持股汇总的报告期。"""
+    if stock_code:
+        _ensure_stock_code(stock_code)  # 先于任何上游请求快速失败
     stocks = fetch_institute_hold_stocks(limit=40, quarter=quarter)
     orgs = fetch_institution_shareholder_changes(limit=30)
     north = fetch_northbound_flow_series(days=60)
