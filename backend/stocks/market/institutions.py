@@ -10,6 +10,10 @@ import pandas as pd
 from ._cache import _cache_get, _cache_set, _now_str, _stale_or, _to_float
 from ._sources import _safe_df_call, get_source_health
 
+# 2024-08 披露调整后上游不再提供北向净买额（快照以 0 占位、历史序列整列为空），
+# 全 null 时用这句话如实标不可用；flows.py 的窗口聚合也复用此文案
+NORTH_DISCLOSURE_MSG = '北向净买额自 2024-08 披露调整后上游不再提供，暂无可展示数据'
+
 
 def _recent_report_quarters(n=8):
     """生成候选季报代码：YYYY + 季度(1-4)，从当前往前推。"""
@@ -265,12 +269,11 @@ def fetch_northbound_flow_series(days=60, ttl=300):
             'hs300_pct': _to_float(r.get('沪深300-涨跌幅')),
         })
 
-    # 2024-08 披露调整后上游不再提供净买额，全 null 时如实标不可用
     has_net = any(i['net_buy'] is not None for i in items)
     data = {
         'available': has_net,
         'items': items,
-        'message': '' if has_net else '北向净买额自 2024-08 披露调整后上游不再提供，暂无可展示数据',
+        'message': '' if has_net else NORTH_DISCLOSURE_MSG,
         'source': 'stock_hsgt_hist_em',
     }
     _cache_set(cache_key, data)

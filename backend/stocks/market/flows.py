@@ -43,6 +43,8 @@ def fetch_hsgt_flow(ttl=120, force=False):
         })
     # 北向净买额自 2024-08 披露调整后，上游以 0 占位（南向仍为真实值）；
     # 0 占位转 null，避免总览卡显示 "+0.00 亿" 误导。
+    # 已知代价：北向某天真为 0（买卖恰好打平）时也会被当作占位符转 null，
+    # 当前披露停止的背景下宁可少显示也不显示假 0。
     for row in rows:
         if row.get('direction') == '北向':
             if row.get('net_buy') == 0:
@@ -275,7 +277,7 @@ def get_market_fund_flow_window(window, ttl=300):
 
 def get_northbound_window(window, ttl=300):
     """北向资金净买额窗口聚合（基于历史序列切片）。"""
-    from .institutions import fetch_northbound_flow_series
+    from .institutions import NORTH_DISCLOSURE_MSG, fetch_northbound_flow_series
 
     cache_key = period_cache_key('north_win', window)
     cached = _cache_get(cache_key, ttl)
@@ -286,9 +288,8 @@ def get_northbound_window(window, ttl=300):
     items = [i for i in series.get('items', []) if window.contains(i.get('date'))]
     valid = [i for i in items if i.get('net_buy') is not None]
     total_net = round(sum(i['net_buy'] for i in valid), 2)
-    # 2024-08 披露调整后上游不再提供净买额，区间内全 null 时如实标不可用
+    # 区间内有数据但净买额全 null 时如实标不可用
     has_net = bool(valid)
-    _NORTH_DISCLOSURE_MSG = '北向净买额自 2024-08 披露调整后上游不再提供，暂无可展示数据'
 
     data = {
         'available': has_net,
@@ -301,7 +302,7 @@ def get_northbound_window(window, ttl=300):
             'inflow_days': sum(1 for i in valid if i['net_buy'] > 0),
             'outflow_days': sum(1 for i in valid if i['net_buy'] < 0),
         },
-        'message': '' if has_net else (_NORTH_DISCLOSURE_MSG if items else '区间内暂无北向数据'),
+        'message': '' if has_net else (NORTH_DISCLOSURE_MSG if items else '区间内暂无北向数据'),
         'meta': _cache_meta(
             cache_key, ttl, series.get('source') or 'stock_hsgt_hist_em', has_net,
             source_data_date=items[-1]['date'] if items else None,
