@@ -111,4 +111,46 @@ export const marketApi = {
   },
 }
 
+// AI 功能（LLM 调用较慢，单独放宽超时）
+const aiTimeout = { timeout: 120000 }
+
+export const aiApi = {
+  // AI 服务商配置 CRUD
+  listProviders() {
+    return api.get('/ai-providers/')
+  },
+  createProvider(data) {
+    return api.post('/ai-providers/', data)
+  },
+  updateProvider(id, data) {
+    return api.patch(`/ai-providers/${id}/`, data)
+  },
+  deleteProvider(id) {
+    return api.delete(`/ai-providers/${id}/`)
+  },
+  testProvider(id) {
+    return api.post(`/ai-providers/${id}/test/`, {}, { timeout: 30000 })
+  },
+
+  // 个股 AI 分析（按需触发）
+  analyzeStock(id) {
+    return api.post(`/stocks/${id}/ai-analysis/`, {}, aiTimeout)
+  },
+
+  // 结构化条件选股（不调 LLM，快速）
+  screener(spec) {
+    return api.post('/screener/', spec, { timeout: 30000 })
+  },
+
+  // 自然语言选股：LLM 翻译成条件后执行
+  screenerAi(query) {
+    return api.post('/screener/ai/', { query }, aiTimeout)
+  },
+
+  // 对筛选结果做 AI 点评
+  screenerComment(query, results) {
+    return api.post('/screener/ai/comment/', { query, results }, aiTimeout)
+  },
+}
+
 export default api

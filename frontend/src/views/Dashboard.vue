@@ -138,6 +138,7 @@ onUnmounted(() => {
       :data="dashboardData"
       :loading="loading"
       @row-click="goToDetail"
+      @ai-click="goToDetail"
       @delete="removeStock"
     />
   </div>

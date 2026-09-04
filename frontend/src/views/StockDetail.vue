@@ -5,6 +5,7 @@ import { stockApi } from '../api/stocks.js'
 import { formatPct, formatNum, formatDateTime, pctClass } from '../utils/format.js'
 import KlineChart from '../components/KlineChart.vue'
 import IntradayChart from '../components/IntradayChart.vue'
+import AiAnalysisPanel from '../components/AiAnalysisPanel.vue'
 
 const route = useRoute()
 const stockId = computed(() => route.params.id)
@@ -189,6 +190,9 @@ watch(stockId, () => {
         @date-click="onKlineDateClick"
       />
     </div>
+
+    <!-- AI 分析 -->
+    <AiAnalysisPanel :stockId="stockId" />
   </div>
 
   <div v-else class="loading">加载中...</div>

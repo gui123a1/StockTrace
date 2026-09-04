@@ -9,6 +9,8 @@ const MarketSectors = () => import('../views/MarketSectors.vue')
 const MarketInstitutions = () => import('../views/MarketInstitutions.vue')
 const MarketNationalEtf = () => import('../views/MarketNationalEtf.vue')
 const MarketEtfRadar = () => import('../views/MarketEtfRadar.vue')
+const Settings = () => import('../views/Settings.vue')
+const Screener = () => import('../views/Screener.vue')
 
 const routes = [
   {
@@ -51,6 +53,16 @@ const routes = [
     name: 'StockDetail',
     component: StockDetail,
     props: true,
+  },
+  {
+    path: '/screener',
+    name: 'Screener',
+    component: Screener,
+  },
+  {
+    path: '/settings',
+    name: 'Settings',
+    component: Settings,
   },
 ]
 

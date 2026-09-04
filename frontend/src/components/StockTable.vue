@@ -7,7 +7,7 @@ defineProps({
   loading: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['row-click', 'delete'])
+const emit = defineEmits(['row-click', 'delete', 'ai-click'])
 
 const expandedRows = ref(new Set())
 
@@ -26,6 +26,11 @@ function isExpanded(code) {
 function handleGoDetail(e, item) {
   e.stopPropagation()
   emit('row-click', item)
+}
+
+function handleAi(e, item) {
+  e.stopPropagation()
+  emit('ai-click', item)
 }
 
 async function handleDelete(e, item) {
@@ -105,6 +110,7 @@ async function handleDelete(e, item) {
                 </div>
                 <div class="expand-actions">
                   <button class="btn-kline-lg" @click="handleGoDetail($event, item)">查看K线图 →</button>
+                  <button class="btn-kline-lg btn-ai-lg" @click="handleAi($event, item)">AI 分析</button>
                 </div>
               </div>
             </td>
@@ -291,6 +297,17 @@ async function handleDelete(e, item) {
 
 .btn-kline-lg:hover {
   background: #3a7bd5;
+  color: #fff;
+}
+
+/* AI 分析按钮（展开行） */
+.btn-ai-lg {
+  border-color: #b8923a;
+  color: #b8923a;
+}
+
+.btn-ai-lg:hover {
+  background: #b8923a;
   color: #fff;
 }
 
