@@ -41,6 +41,14 @@ def fetch_hsgt_flow(ttl=120, force=False):
             'related_index': str(r.get('相关指数', '')),
             'index_change_pct': _to_float(r.get('指数涨跌幅')),
         })
+    # 北向净买额自 2024-08 披露调整后，上游以 0 占位（南向仍为真实值）；
+    # 0 占位转 null，避免总览卡显示 "+0.00 亿" 误导。
+    for row in rows:
+        if row.get('direction') == '北向':
+            if row.get('net_buy') == 0:
+                row['net_buy'] = None
+            if row.get('net_inflow') == 0:
+                row['net_inflow'] = None
     _cache_set('hsgt', rows)
     return rows
 
@@ -124,7 +132,8 @@ def _normalize_market_fund_hist(df, days, source_name):
             'large_net': _to_float(r.get('large_net')),
             'super_net': _to_float(r.get('super_net')),
         })
-    if not items:
+    if not items or all(i['main_net'] is None for i in items):
+        # 北向兜底源在披露调整后可能整列为空，全 null 的序列对图表无意义
         return None
     return {
         'available': True,
@@ -275,22 +284,26 @@ def get_northbound_window(window, ttl=300):
 
     series = fetch_northbound_flow_series(days=400)
     items = [i for i in series.get('items', []) if window.contains(i.get('date'))]
-    total_net = round(sum(i.get('net_buy') or 0 for i in items), 2)
+    valid = [i for i in items if i.get('net_buy') is not None]
+    total_net = round(sum(i['net_buy'] for i in valid), 2)
+    # 2024-08 披露调整后上游不再提供净买额，区间内全 null 时如实标不可用
+    has_net = bool(valid)
+    _NORTH_DISCLOSURE_MSG = '北向净买额自 2024-08 披露调整后上游不再提供，暂无可展示数据'
 
     data = {
-        'available': bool(items),
+        'available': has_net,
         'window': window.meta(),
         'coverage_start': items[0]['date'] if items else None,
         'items': items,
         'summary': {
-            'days': len(items),
-            'total_net_buy': total_net if items else None,
-            'inflow_days': sum(1 for i in items if (i.get('net_buy') or 0) > 0),
-            'outflow_days': sum(1 for i in items if (i.get('net_buy') or 0) < 0),
+            'days': len(valid),
+            'total_net_buy': total_net if has_net else None,
+            'inflow_days': sum(1 for i in valid if i['net_buy'] > 0),
+            'outflow_days': sum(1 for i in valid if i['net_buy'] < 0),
         },
-        'message': '' if items else '区间内暂无北向数据',
+        'message': '' if has_net else (_NORTH_DISCLOSURE_MSG if items else '区间内暂无北向数据'),
         'meta': _cache_meta(
-            cache_key, ttl, series.get('source') or 'stock_hsgt_hist_em', bool(items),
+            cache_key, ttl, series.get('source') or 'stock_hsgt_hist_em', has_net,
             source_data_date=items[-1]['date'] if items else None,
             disclaimer='北向资金为历史成交净买额口径，存在披露口径变化。',
         ),

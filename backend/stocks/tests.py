@@ -372,6 +372,57 @@ class MarketWindowEndpointTests(SimpleTestCase):
         self.assertEqual(data['summary']['days'], 2)
         self.assertEqual(data['summary']['total_net_buy'], 15.0)
 
+    @patch('stocks.market.institutions.fetch_northbound_flow_series')
+    def test_northbound_window_all_null_net_buy_is_unavailable(self, mock_series):
+        # 2024-08 披露调整后上游不再提供净买额：全 null 时如实标不可用，不得返回 0
+        from stocks.market.periods import PeriodWindow
+        from datetime import date
+
+        window = PeriodWindow('custom', date(2026, 9, 1), date(2026, 9, 2))
+        mock_series.return_value = {
+            'source': 'stock_hsgt_hist_em',
+            'items': [
+                {'date': '2026-09-01', 'net_buy': None, 'inflow': None},
+                {'date': '2026-09-02', 'net_buy': None, 'inflow': None},
+            ],
+        }
+        data = market.get_northbound_window(window)
+
+        self.assertFalse(data['available'])
+        self.assertIsNone(data['summary']['total_net_buy'])
+        self.assertEqual(data['summary']['days'], 0)
+        self.assertIn('披露', data['message'])
+
+    def test_normalize_market_fund_hist_all_null_main_net_returns_none(self):
+        # 北向兜底序列整列为空时视为无数据，不得以 available=True 空画图
+        df = pd.DataFrame({
+            '日期': ['2026-09-01', '2026-09-02'],
+            '当日成交净买额': [None, None],
+        })
+        from stocks.market.flows import _normalize_market_fund_hist
+
+        self.assertIsNone(_normalize_market_fund_hist(df, 30, 'eastmoney_hsgt_hist_north'))
+
+    @patch('stocks.market.flows.ak.stock_hsgt_fund_flow_summary_em')
+    def test_hsgt_north_zero_placeholder_becomes_null(self, mock_src):
+        # 北向净买额 0 为上游占位（披露停止），应转 null；南向真实值保留
+        mock_src.return_value = pd.DataFrame([
+            {'交易日': '2026-09-04', '类型': '沪港通', '板块': '沪股通', '资金方向': '北向',
+             '交易状态': 3, '成交净买额': 0.0, '资金净流入': 0.0, '当日资金余额': 0.0,
+             '上涨数': 735, '持平数': 63, '下跌数': 845, '相关指数': '上证指数', '指数涨跌幅': -0.3},
+            {'交易日': '2026-09-04', '类型': '沪港通', '板块': '港股通(沪)', '资金方向': '南向',
+             '交易状态': 3, '成交净买额': -47.08, '资金净流入': 420.0, '当日资金余额': 0.0,
+             '上涨数': 446, '持平数': 13, '下跌数': 162, '相关指数': '恒生指数', '指数涨跌幅': 1.74},
+        ])
+        rows = market.fetch_hsgt_flow(force=True)
+
+        north = next(r for r in rows if r['direction'] == '北向')
+        south = next(r for r in rows if r['direction'] == '南向')
+        self.assertIsNone(north['net_buy'])
+        self.assertIsNone(north['net_inflow'])
+        self.assertEqual(south['net_buy'], -47.08)
+        self.assertEqual(south['net_inflow'], 420.0)
+
 
 class MarketApiValidationTests(SimpleTestCase):
     def test_invalid_etf_scope_returns_400(self):

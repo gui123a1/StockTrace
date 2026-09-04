@@ -265,10 +265,12 @@ def fetch_northbound_flow_series(days=60, ttl=300):
             'hs300_pct': _to_float(r.get('沪深300-涨跌幅')),
         })
 
+    # 2024-08 披露调整后上游不再提供净买额，全 null 时如实标不可用
+    has_net = any(i['net_buy'] is not None for i in items)
     data = {
-        'available': True,
+        'available': has_net,
         'items': items,
-        'message': '',
+        'message': '' if has_net else '北向净买额自 2024-08 披露调整后上游不再提供，暂无可展示数据',
         'source': 'stock_hsgt_hist_em',
     }
     _cache_set(cache_key, data)
