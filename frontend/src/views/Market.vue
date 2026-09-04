@@ -11,6 +11,7 @@ import {
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { marketApi } from '../api/stocks.js'
+import PeriodPicker from '../components/PeriodPicker.vue'
 import { formatPct, formatNum, pctClass } from '../utils/format.js'
 import { formatYi, formatTurnover } from '../utils/marketFormat.js'
 
@@ -40,7 +41,37 @@ const indices = computed(() => overview.value?.indices || [])
 const fund = computed(() => overview.value?.fund || {})
 const activity = computed(() => fund.value.activity || {})
 const hsgt = computed(() => fund.value.hsgt || [])
-const mainHist = computed(() => fund.value.main_hist || { available: false, items: [], message: '' })
+const mainHist = computed(() => flowData.value || fund.value.main_hist || { available: false, items: [], message: '' })
+
+// ── 大盘资金流区间（/market/market-flow/，未加载时回退 overview 内嵌 30 日视图） ──
+const FLOW_PERIODS = [
+  ['1d', '当日'], ['3d', '3日'], ['5d', '5日'], ['1w', '近1周'],
+  ['1m', '近1月'], ['3m', '近3月'], ['6m', '近半年'], ['ytd', '今年以来'],
+]
+const flowPeriod = ref('1m')
+const flowLoading = ref(false)
+const flowError = ref('')
+const flowData = ref(null)
+const flowSummary = computed(() => flowData.value?.summary || {})
+const flowNote = computed(() => flowData.value?.note || '')
+
+async function loadFlow() {
+  flowLoading.value = true
+  flowError.value = ''
+  try {
+    flowData.value = (await marketApi.getMarketFlow({ period: flowPeriod.value })).data
+  } catch (e) {
+    console.error(e)
+    flowError.value = e.response?.data?.detail || '加载大盘资金流区间失败'
+  } finally {
+    flowLoading.value = false
+  }
+}
+function setFlowPeriod(p) {
+  if (flowPeriod.value === p) return
+  flowPeriod.value = p
+  loadFlow()
+}
 const concept = computed(() => fund.value.concept || { available: false, inflow_top: [], outflow_top: [] })
 const modules = computed(() => overview.value?.modules || defaultModules)
 const northNet = computed(() => fund.value.northbound_net_buy)
@@ -119,6 +150,7 @@ async function loadMarket() {
 
 onMounted(() => {
   loadMarket()
+  loadFlow()
   timer = setInterval(loadMarket, 90000)
 })
 
@@ -254,7 +286,23 @@ onUnmounted(() => {
       </div>
 
       <div class="chart-block">
-        <h3>大盘主力资金净流入（近 30 日）</h3>
+        <div class="section-head">
+          <h3>大盘主力资金净流入<span v-if="flowData?.window?.label" class="flow-label">（{{ flowData.window.label }}）</span></h3>
+          <PeriodPicker
+            :model-value="flowPeriod"
+            :options="FLOW_PERIODS"
+            :loading="flowLoading"
+            @update:model-value="setFlowPeriod"
+          />
+        </div>
+        <div v-if="flowError" class="error-box sm">{{ flowError }}</div>
+        <div class="flow-summary" v-if="flowSummary.days != null">
+          <span>区间交易日 <b>{{ flowSummary.days }}</b></span>
+          <span>主力合计 <b :class="pctClass(flowSummary.total_main_net)">{{ formatYi(flowSummary.total_main_net) }} 亿</b></span>
+          <span>净流入 <b class="up">{{ flowSummary.inflow_days ?? '-' }} 天</b></span>
+          <span>净流出 <b class="down">{{ flowSummary.outflow_days ?? '-' }} 天</b></span>
+        </div>
+        <p v-if="flowNote" class="flow-note">{{ flowNote }}</p>
         <v-chart
           v-if="mainHist.available && mainHist.items?.length"
           :option="fundChartOption"
@@ -506,6 +554,20 @@ onUnmounted(() => {
 }
 
 .chart-block { margin-top: 8px; }
+.chart-block .section-head { margin: 0 0 10px; }
+.chart-block .section-head h3 { margin: 0; }
+.flow-label { color: #888; font-weight: normal; font-size: 12px; }
+.flow-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: baseline;
+  color: #8896a8;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.flow-summary b { color: #eee; font-size: 13px; }
+.flow-note { color: #b89a5a; font-size: 12px; margin: 0 0 8px; }
 .concept-block { margin-top: 12px; }
 .concept-grid {
   display: grid;

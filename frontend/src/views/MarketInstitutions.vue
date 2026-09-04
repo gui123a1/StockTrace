@@ -10,6 +10,7 @@ import {
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import MarketSubNav from '../components/MarketSubNav.vue'
+import PeriodPicker from '../components/PeriodPicker.vue'
 import { marketApi } from '../api/stocks.js'
 import { formatPct, pctClass } from '../utils/format.js'
 import { formatAmount } from '../utils/marketFormat.js'
@@ -27,10 +28,39 @@ const detailError = ref('')
 
 const byStock = computed(() => data.value?.by_stock || {})
 const byOrg = computed(() => data.value?.by_institution || {})
-const north = computed(() => data.value?.northbound || {})
 const disclaimer = computed(() => data.value?.disclaimer || '')
 const stockItems = computed(() => byStock.value.items || [])
 const orgItems = computed(() => byOrg.value.items || [])
+
+// ── 北向资金区间（/market/northbound/，未加载时回退 institutions 内嵌 30 日视图） ──
+const NORTH_PERIODS = [
+  ['1d', '当日'], ['3d', '3日'], ['5d', '5日'], ['1w', '近1周'],
+  ['1m', '近1月'], ['3m', '近3月'], ['6m', '近半年'], ['1y', '近1年'], ['ytd', '今年以来'],
+]
+const northPeriod = ref('1m')
+const northLoading = ref(false)
+const northError = ref('')
+const northData = ref(null)
+const north = computed(() => northData.value || data.value?.northbound || {})
+const northSummary = computed(() => northData.value?.summary || {})
+
+async function loadNorth() {
+  northLoading.value = true
+  northError.value = ''
+  try {
+    northData.value = (await marketApi.getNorthbound({ period: northPeriod.value })).data
+  } catch (e) {
+    console.error(e)
+    northError.value = e.response?.data?.detail || '加载北向区间数据失败'
+  } finally {
+    northLoading.value = false
+  }
+}
+function setNorthPeriod(p) {
+  if (northPeriod.value === p) return
+  northPeriod.value = p
+  loadNorth()
+}
 
 const northChart = computed(() => {
   const items = north.value.items || []
@@ -117,7 +147,7 @@ async function loadDetail() {
   }
 }
 
-onMounted(() => load())
+onMounted(() => { load(); loadNorth() })
 </script>
 
 <template>
@@ -141,14 +171,34 @@ onMounted(() => load())
 
     <!-- 北向资金 -->
     <section class="section">
-      <h2>北向资金（外资通道）</h2>
+      <div class="section-head">
+        <h2>北向资金（外资通道）</h2>
+        <PeriodPicker
+          :model-value="northPeriod"
+          :options="NORTH_PERIODS"
+          :loading="northLoading"
+          @update:model-value="setNorthPeriod"
+        />
+      </div>
+      <div v-if="northError" class="error-box sm">{{ northError }}</div>
       <p class="hint" v-if="!north.available">{{ north.message || '暂无北向序列' }}</p>
-      <v-chart
-        v-else-if="northChart.series"
-        :option="northChart"
-        autoresize
-        style="height: 280px; width: 100%"
-      />
+      <template v-else>
+        <div class="north-summary" v-if="northSummary.days != null">
+          <span>区间交易日 <b>{{ northSummary.days }}</b></span>
+          <span>合计净买额 <b :class="pctClass(northSummary.total_net_buy)">
+            {{ northSummary.total_net_buy != null ? `${northSummary.total_net_buy} 亿` : '-' }}
+          </b></span>
+          <span>净流入 <b class="up">{{ northSummary.inflow_days ?? '-' }} 天</b></span>
+          <span>净流出 <b class="down">{{ northSummary.outflow_days ?? '-' }} 天</b></span>
+          <span v-if="northData?.window?.label" class="muted">{{ northData.window.label }}</span>
+        </div>
+        <v-chart
+          v-if="northChart.series"
+          :option="northChart"
+          autoresize
+          style="height: 280px; width: 100%"
+        />
+      </template>
     </section>
 
     <!-- 个股查询 -->
@@ -529,5 +579,30 @@ onMounted(() => load())
   .detail-grid {
     grid-template-columns: 1fr;
   }
+}.section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
 }
+
+.section-head h2 {
+  margin: 0;
+}
+
+.north-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: baseline;
+  color: #99a;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
+.north-summary b { color: #eee; font-size: 13px; }
+.north-summary .muted { color: #667; }
+
 </style>

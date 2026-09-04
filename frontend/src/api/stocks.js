@@ -96,6 +96,14 @@ export const marketApi = {
   getEtfDetail(code, params = {}) {
     return api.get(`/market/etfs/${code}/`, { ...marketTimeout, params })
   },
+  // 大盘主力资金流区间聚合（上游仅约 120 个交易日，超出会标 truncated）
+  getMarketFlow(params = {}) {
+    return api.get('/market/market-flow/', { ...marketTimeout, params })
+  },
+  // 北向资金净买额区间聚合
+  getNorthbound(params = {}) {
+    return api.get('/market/northbound/', { ...marketTimeout, params })
+  },
   getInstitutions(code) {
     const params = code ? { code } : {}
     return api.get('/market/institutions/', { ...marketTimeout, params })
