@@ -324,7 +324,7 @@ onUnmounted(() => {
               <tbody>
                 <tr v-for="(row, i) in (concept.inflow_top || []).slice(0, 5)" :key="'in'+i">
                   <td>{{ row.name }}</td>
-                  <td class="up">{{ formatAmount(row.net) }}</td>
+                  <td :class="row.net > 0 ? 'up' : row.net < 0 ? 'down' : ''">{{ formatAmount(row.net) }}</td>
                   <td :class="pctClass(row.change_pct)">{{ formatPct(row.change_pct) }}</td>
                 </tr>
               </tbody>
@@ -337,7 +337,7 @@ onUnmounted(() => {
               <tbody>
                 <tr v-for="(row, i) in (concept.outflow_top || []).slice(0, 5)" :key="'out'+i">
                   <td>{{ row.name }}</td>
-                  <td class="down">{{ formatAmount(row.net) }}</td>
+                  <td :class="row.net > 0 ? 'up' : row.net < 0 ? 'down' : ''">{{ formatAmount(row.net) }}</td>
                   <td :class="pctClass(row.change_pct)">{{ formatPct(row.change_pct) }}</td>
                 </tr>
               </tbody>
