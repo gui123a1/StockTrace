@@ -14,12 +14,24 @@ from .views import (
     market_etf_detail,
     market_institutions,
 )
+from .ai.views import (
+    AiProviderViewSet,
+    stock_ai_analysis,
+    screener,
+    screener_ai,
+    screener_ai_comment,
+)
 
 router = DefaultRouter()
 router.register(r'stocks', StockViewSet, basename='stock')
+router.register(r'ai-providers', AiProviderViewSet, basename='ai-provider')
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('stocks/<int:pk>/ai-analysis/', stock_ai_analysis, name='stock-ai-analysis'),
+    path('screener/', screener, name='screener'),
+    path('screener/ai/', screener_ai, name='screener-ai'),
+    path('screener/ai/comment/', screener_ai_comment, name='screener-ai-comment'),
     path('dashboard/', dashboard, name='dashboard'),
     path('market/', market_overview, name='market-overview'),
     path('market/trend/', market_trend, name='market-trend'),

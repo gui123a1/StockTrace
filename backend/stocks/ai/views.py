@@ -1,0 +1,152 @@
+"""AI 功能视图：Provider 配置、个股分析、条件选股、AI 翻译与点评"""
+import logging
+
+from rest_framework import viewsets, status
+from rest_framework.decorators import action, api_view
+from rest_framework.response import Response
+
+from ..models import Stock, AiProvider
+from ..ai_serializers import AiProviderSerializer
+from .llm import LlmClient, LlmError
+from .prompts import (
+    DISCLAIMER,
+    build_analysis_messages,
+    build_translate_messages,
+    build_comment_messages,
+)
+from .screener import ConditionError, run_screener
+from .throttle import check_throttle, log_call
+
+logger = logging.getLogger(__name__)
+
+
+class AiProviderViewSet(viewsets.ModelViewSet):
+    """AI 服务商配置 CRUD"""
+    queryset = AiProvider.objects.all()
+    serializer_class = AiProviderSerializer
+
+    @action(detail=True, methods=['post'], url_path='test')
+    def test_connection(self, request, pk=None):
+        """用最小请求验证 Key 与连通性"""
+        provider = self.get_object()
+        try:
+            client = LlmClient(provider)
+            text, _ = client.chat(
+                [{'role': 'user', 'content': '回复"ok"两个字母即可'}],
+                max_tokens=10,
+                timeout=15,
+            )
+        except (LlmError, ValueError) as exc:
+            return Response(
+                {'status': 'failed', 'message': str(exc)},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+        return Response({'status': 'ok', 'reply': text.strip()[:50]})
+
+
+def _get_active_provider():
+    provider = AiProvider.objects.filter(is_enabled=True).first()
+    if provider is None:
+        return None, ('未配置可用的 AI 服务商，请先在设置页添加')
+    try:
+        return LlmClient(provider), None
+    except ValueError as exc:
+        return None, str(exc)
+
+
+@api_view(['POST'])
+def stock_ai_analysis(request, pk):
+    """个股 AI 分析：手动按需触发，同步返回"""
+    stock = Stock.objects.filter(pk=pk, is_active=True).first()
+    if stock is None:
+        return Response({'detail': '股票不存在'}, status=status.HTTP_404_NOT_FOUND)
+
+    allowed, reason = check_throttle('analysis', stock=stock)
+    if not allowed:
+        return Response({'detail': reason}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+    client, err = _get_active_provider()
+    if err:
+        return Response({'detail': err}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        text, usage = client.chat(build_analysis_messages(stock), max_tokens=1500)
+    except (LlmError, ValueError) as exc:
+        log_call('analysis', provider=client.provider, stock=stock, success=False)
+        logger.warning('AI 分析失败 %s: %s', stock.code, exc)
+        return Response({'detail': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+    log_call('analysis', provider=client.provider, stock=stock, usage=usage)
+    return Response({'analysis': text, 'disclaimer': DISCLAIMER})
+
+
+@api_view(['POST'])
+def screener(request):
+    """结构化条件选股（可复现）"""
+    try:
+        rows = run_screener(request.data)
+    except ConditionError as exc:
+        return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response({'count': len(rows), 'results': rows, 'disclaimer': None})
+
+
+@api_view(['POST'])
+def screener_ai(request):
+    """自然语言 → LLM 翻译成结构化条件 → 复用引擎执行"""
+    query = (request.data.get('query') or '').strip()
+    if not query:
+        return Response({'detail': 'query 不能为空'}, status=status.HTTP_400_BAD_REQUEST)
+
+    allowed, reason = check_throttle('screener_translate')
+    if not allowed:
+        return Response({'detail': reason}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+    client, err = _get_active_provider()
+    if err:
+        return Response({'detail': err}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        spec, usage = client.chat_json(build_translate_messages(query))
+    except (LlmError, ValueError) as exc:
+        log_call('screener_translate', provider=client.provider, success=False)
+        return Response({'detail': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+    log_call('screener_translate', provider=client.provider, usage=usage)
+
+    try:
+        rows = run_screener(spec)
+    except ConditionError as exc:
+        # LLM 翻译出了引擎不认的条件：如实报错，不猜测修正
+        return Response(
+            {'detail': f'AI 生成的条件无法执行：{exc}', 'conditions': spec},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    return Response({'conditions': spec, 'count': len(rows), 'results': rows})
+
+
+@api_view(['POST'])
+def screener_ai_comment(request):
+    """对筛选结果做 AI 点评。入参：query（原始需求）+ results（screener 返回的 results）"""
+    query = (request.data.get('query') or '').strip()
+    rows = request.data.get('results')
+    if not isinstance(rows, list) or not rows:
+        return Response(
+            {'detail': 'results 必须是非空数组'}, status=status.HTTP_400_BAD_REQUEST
+        )
+
+    allowed, reason = check_throttle('screener_comment')
+    if not allowed:
+        return Response({'detail': reason}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+    client, err = _get_active_provider()
+    if err:
+        return Response({'detail': err}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        text, usage = client.chat(build_comment_messages(rows, query), max_tokens=800)
+    except (LlmError, ValueError) as exc:
+        log_call('screener_comment', provider=client.provider, success=False)
+        return Response({'detail': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+    log_call('screener_comment', provider=client.provider, usage=usage)
+    return Response({'comment': text, 'disclaimer': DISCLAIMER})

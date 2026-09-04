@@ -4,3 +4,5 @@ django-cors-headers>=4.0
 apscheduler>=3.10
 akshare>=1.14
 baostock>=0.9
+cryptography>=42.0
+requests>=2.31

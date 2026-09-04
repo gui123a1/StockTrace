@@ -1,6 +1,59 @@
 from django.db import models
 
 
+class AiProvider(models.Model):
+    """LLM 服务商配置（OpenAI 兼容协议，一套客户端通吃 DeepSeek/Kimi/Qwen/GLM 等）
+
+    api_key 落库前用 DJANGO_SECRET_KEY 派生密钥加密（stocks/ai/crypto.py），
+    序列化输出只回尾四位脱敏。
+    """
+    name = models.CharField('名称', max_length=50)
+    base_url = models.CharField('接口地址', max_length=200,
+                                help_text='OpenAI 兼容 base_url，如 https://api.deepseek.com')
+    api_key_encrypted = models.TextField('加密的 API Key')
+    model = models.CharField('模型名', max_length=100)
+    is_enabled = models.BooleanField('启用', default=True)
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+
+    class Meta:
+        verbose_name = 'AI 服务商'
+        verbose_name_plural = 'AI 服务商'
+        ordering = ['-is_enabled', 'id']
+
+    def __str__(self):
+        return f"{self.name} ({self.model})"
+
+
+class AiCallLog(models.Model):
+    """AI 调用流水：用于同股冷却与每日调用上限节流（防 Basic Auth 泄露后额度被烧）"""
+    PURPOSE_ANALYSIS = 'analysis'
+    PURPOSE_SCREENER_TRANSLATE = 'screener_translate'
+    PURPOSE_SCREENER_COMMENT = 'screener_comment'
+    PURPOSE_CHOICES = [
+        (PURPOSE_ANALYSIS, '个股分析'),
+        (PURPOSE_SCREENER_TRANSLATE, '选股条件翻译'),
+        (PURPOSE_SCREENER_COMMENT, '选股结果点评'),
+    ]
+
+    provider = models.ForeignKey(
+        AiProvider, on_delete=models.SET_NULL, null=True, verbose_name='服务商'
+    )
+    stock = models.ForeignKey(
+        'Stock', on_delete=models.SET_NULL, null=True, blank=True, verbose_name='股票'
+    )
+    purpose = models.CharField('用途', max_length=30, choices=PURPOSE_CHOICES)
+    success = models.BooleanField('成功', default=True)
+    prompt_tokens = models.IntegerField('输入 tokens', null=True, blank=True)
+    completion_tokens = models.IntegerField('输出 tokens', null=True, blank=True)
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'AI 调用记录'
+        verbose_name_plural = 'AI 调用记录'
+        ordering = ['-created_at']
+
+
 class Stock(models.Model):
     """关注的股票"""
     code = models.CharField('股票代码', max_length=10, unique=True)
