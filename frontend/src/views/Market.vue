@@ -13,7 +13,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { marketApi } from '../api/stocks.js'
 import PeriodPicker from '../components/PeriodPicker.vue'
 import { formatPct, formatNum, pctClass } from '../utils/format.js'
-import { formatYi, formatTurnover } from '../utils/marketFormat.js'
+import { formatYi, formatTurnover, formatAmount } from '../utils/marketFormat.js'
 
 use([
   BarChart,
@@ -296,7 +296,7 @@ onUnmounted(() => {
           />
         </div>
         <div v-if="flowError" class="error-box sm">{{ flowError }}</div>
-        <div class="flow-summary" v-if="flowSummary.days != null">
+        <div class="flow-summary" v-if="flowData?.available && flowSummary.days != null">
           <span>区间交易日 <b>{{ flowSummary.days }}</b></span>
           <span>主力合计 <b :class="pctClass(flowSummary.total_main_net)">{{ formatYi(flowSummary.total_main_net) }} 亿</b></span>
           <span>净流入 <b class="up">{{ flowSummary.inflow_days ?? '-' }} 天</b></span>
@@ -324,7 +324,7 @@ onUnmounted(() => {
               <tbody>
                 <tr v-for="(row, i) in (concept.inflow_top || []).slice(0, 5)" :key="'in'+i">
                   <td>{{ row.name }}</td>
-                  <td class="up">{{ formatYi(row.net) }}</td>
+                  <td class="up">{{ formatAmount(row.net) }}</td>
                   <td :class="pctClass(row.change_pct)">{{ formatPct(row.change_pct) }}</td>
                 </tr>
               </tbody>
@@ -337,7 +337,7 @@ onUnmounted(() => {
               <tbody>
                 <tr v-for="(row, i) in (concept.outflow_top || []).slice(0, 5)" :key="'out'+i">
                   <td>{{ row.name }}</td>
-                  <td class="down">{{ formatYi(row.net) }}</td>
+                  <td class="down">{{ formatAmount(row.net) }}</td>
                   <td :class="pctClass(row.change_pct)">{{ formatPct(row.change_pct) }}</td>
                 </tr>
               </tbody>
