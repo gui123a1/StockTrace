@@ -19,6 +19,8 @@ from .views import (
     alert_event_read,
     screener_preset_list,
     screener_preset_detail,
+    stock_group_list,
+    stock_group_detail,
 )
 from .ai.views import (
     AiProviderViewSet,
@@ -44,6 +46,8 @@ urlpatterns = [
     path('alerts/<int:pk>/', alert_detail, name='alert-detail'),
     path('alerts/events/', alert_event_list, name='alert-event-list'),
     path('alerts/events/read/', alert_event_read, name='alert-event-read'),
+    path('stock-groups/', stock_group_list, name='stock-group-list'),
+    path('stock-groups/<int:pk>/', stock_group_detail, name='stock-group-detail'),
     path('dashboard/', dashboard, name='dashboard'),
     path('market/', market_overview, name='market-overview'),
     path('market/trend/', market_trend, name='market-trend'),

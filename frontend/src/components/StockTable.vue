@@ -6,6 +6,7 @@ import { stockApi } from '../api/stocks.js'
 defineProps({
   data: { type: Array, default: () => [] },
   loading: { type: Boolean, default: false },
+  groups: { type: Array, default: () => [] },
 })
 
 const emit = defineEmits(['row-click', 'delete', 'ai-click', 'refresh'])
@@ -50,6 +51,15 @@ function setDraft(item, key, value) {
     }
   }
   costDrafts.value[item.code][key] = value
+}
+
+async function changeGroup(item, value) {
+  try {
+    await stockApi.update(item.id, { group_id: value === '' ? null : Number(value) })
+    emit('refresh')
+  } catch {
+    alert('修改分组失败，请重试')
+  }
 }
 
 async function saveCost(item) {
@@ -160,6 +170,13 @@ async function handleDelete(e, item) {
                 <div class="expand-actions">
                   <button class="btn-kline-lg" @click="handleGoDetail($event, item)">查看K线图 →</button>
                   <button class="btn-kline-lg btn-ai-lg" @click="handleAi($event, item)">AI 分析</button>
+                </div>
+                <div class="group-row">
+                  <span class="elabel">分组</span>
+                  <select :value="item.group_id ?? ''" @change="changeGroup(item, $event.target.value)">
+                    <option value="">未分组</option>
+                    <option v-for="g in groups" :key="g.id" :value="g.id">{{ g.name }}</option>
+                  </select>
                 </div>
                 <div class="cost-row">
                   <span class="elabel">持仓（可选，填后参与盈亏统计）</span>
@@ -340,6 +357,22 @@ async function handleDelete(e, item) {
 
 .cost-row .elabel {
   font-size: 12px;
+}
+
+.group-row {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.group-row select {
+  padding: 6px 10px;
+  border: 1px solid #3a3a5a;
+  border-radius: 6px;
+  background: #14142a;
+  color: #eee;
+  font-size: 13px;
 }
 
 .cost-row input {

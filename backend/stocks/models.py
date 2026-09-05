@@ -54,11 +54,30 @@ class AiCallLog(models.Model):
         ordering = ['-created_at']
 
 
+class StockGroup(models.Model):
+    """自选股分组；股票可不分组（group 为空）。删除分组时股票自动变回未分组。"""
+    name = models.CharField('分组名称', max_length=50, unique=True)
+    order = models.IntegerField('显示顺序', default=0)
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+
+    class Meta:
+        verbose_name = '自选分组'
+        verbose_name_plural = '自选分组'
+        ordering = ['order', 'id']
+
+    def __str__(self):
+        return self.name
+
+
 class Stock(models.Model):
     """关注的股票"""
     code = models.CharField('股票代码', max_length=10, unique=True)
     name = models.CharField('股票名称', max_length=50, blank=True, default='')
     is_active = models.BooleanField('是否监控中', default=True)
+    group = models.ForeignKey(
+        StockGroup, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='stocks', verbose_name='分组',
+    )
     # 可选持仓成本：填了才参与看板盈亏统计（None 表示纯观察，不算钱）
     cost_price = models.DecimalField('成本价', max_digits=10, decimal_places=3, null=True, blank=True)
     quantity = models.IntegerField('持股数(股)', null=True, blank=True)

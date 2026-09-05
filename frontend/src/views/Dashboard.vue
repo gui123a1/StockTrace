@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { stockApi, dashboardApi } from '../api/stocks.js'
+import { stockApi, dashboardApi, groupApi } from '../api/stocks.js'
 import StockTable from '../components/StockTable.vue'
 import StockWatchlist from '../components/StockWatchlist.vue'
 import AlertPanel from '../components/AlertPanel.vue'
@@ -13,6 +13,59 @@ const fetchLoading = ref(false)
 const fetchMessage = ref('')
 let refreshTimer = null
 let pollTimer = null
+
+// 分组：标签页筛选 + 管理（新增/重命名/删除）
+const groups = ref([])
+const activeGroup = ref('all')
+
+async function loadGroups() {
+  try {
+    groups.value = (await groupApi.list()).data
+  } catch (e) {
+    console.error('加载分组失败', e)
+  }
+}
+
+const filteredData = computed(() => {
+  if (activeGroup.value === 'all') return dashboardData.value
+  if (activeGroup.value === 'none') return dashboardData.value.filter(d => d.group_id == null)
+  return dashboardData.value.filter(d => d.group_id === Number(activeGroup.value))
+})
+
+const ungroupedCount = computed(() => dashboardData.value.filter(d => d.group_id == null).length)
+
+async function addGroup() {
+  const name = prompt('新分组名称：')
+  if (!name || !name.trim()) return
+  try {
+    await groupApi.create(name.trim())
+    await loadGroups()
+  } catch (e) {
+    alert(e.response?.data?.detail || '创建分组失败')
+  }
+}
+
+async function renameGroup(g) {
+  const name = prompt('修改分组名称：', g.name)
+  if (!name || !name.trim() || name.trim() === g.name) return
+  try {
+    await groupApi.update(g.id, { name: name.trim() })
+    await Promise.all([loadGroups(), loadDashboard()])
+  } catch (e) {
+    alert(e.response?.data?.detail || '重命名失败')
+  }
+}
+
+async function removeGroup(g) {
+  if (!confirm(`删除分组「${g.name}」？组内股票将变回未分组。`)) return
+  try {
+    await groupApi.remove(g.id)
+    if (activeGroup.value === g.id) activeGroup.value = 'all'
+    await Promise.all([loadGroups(), loadDashboard()])
+  } catch (e) {
+    alert('删除分组失败')
+  }
+}
 
 // 持仓汇总：只统计填了成本价的股票；数据来自看板真实行情
 const portfolio = computed(() => {
@@ -123,6 +176,7 @@ function onWatchlistRefresh() {
 // 低配 VPS：看板 60s 轮询即可（拉取任务另有独立轮询）
 onMounted(() => {
   loadDashboard()
+  loadGroups()
   refreshTimer = setInterval(loadDashboard, 60000)
 })
 
@@ -155,9 +209,30 @@ onUnmounted(() => {
 
     <AlertPanel :stocks="dashboardData" />
 
+    <div class="group-bar">
+      <button :class="{ active: activeGroup === 'all' }" @click="activeGroup = 'all'">
+        全部 {{ dashboardData.length }}
+      </button>
+      <button
+        v-for="g in groups"
+        :key="g.id"
+        :class="{ active: activeGroup === g.id }"
+        @click="activeGroup = g.id"
+      >
+        {{ g.name }} {{ g.stock_count }}
+        <span class="g-op" title="重命名" @click.stop="renameGroup(g)">✎</span>
+        <span class="g-op danger" title="删除分组" @click.stop="removeGroup(g)">✕</span>
+      </button>
+      <button v-if="ungroupedCount" :class="{ active: activeGroup === 'none' }" @click="activeGroup = 'none'">
+        未分组 {{ ungroupedCount }}
+      </button>
+      <button class="g-add" @click="addGroup">＋ 新分组</button>
+    </div>
+
     <StockTable
-      :data="dashboardData"
+      :data="filteredData"
       :loading="loading"
+      :groups="groups"
       @row-click="goToDetail"
       @ai-click="goToDetail"
       @delete="removeStock"
@@ -201,6 +276,44 @@ onUnmounted(() => {
 
 .portfolio.down {
   color: #00c853;
+}
+
+.group-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.group-bar button {
+  padding: 6px 14px;
+  border: 1px solid #2a3a5e;
+  border-radius: 16px;
+  background: #16213e;
+  color: #99a6bd;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.group-bar button.active {
+  background: #0f3460;
+  color: #fff;
+  border-color: #3a7bd5;
+}
+
+.group-bar .g-add {
+  border-style: dashed;
+}
+
+.g-op {
+  margin-left: 6px;
+  color: #7ea6d9;
+  cursor: pointer;
+}
+
+.g-op.danger {
+  color: #ff8a96;
 }
 
 .btn {

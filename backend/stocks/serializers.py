@@ -1,11 +1,15 @@
 from rest_framework import serializers
-from .models import Stock, DailyQuote, MinuteBar
+from .models import Stock, StockGroup, DailyQuote, MinuteBar
 
 
 class StockSerializer(serializers.ModelSerializer):
+    group = serializers.PrimaryKeyRelatedField(
+        queryset=StockGroup.objects.all(), required=False, allow_null=True,
+    )
+
     class Meta:
         model = Stock
-        fields = ['id', 'code', 'name', 'is_active', 'cost_price', 'quantity', 'created_at']
+        fields = ['id', 'code', 'name', 'is_active', 'group', 'cost_price', 'quantity', 'created_at']
         read_only_fields = ['id', 'created_at']
         extra_kwargs = {
             'name': {'required': False, 'allow_blank': True},
@@ -48,6 +52,8 @@ class DashboardStockSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     code = serializers.CharField()
     name = serializers.CharField(allow_blank=True)
+    group_id = serializers.IntegerField(allow_null=True)
+    group_name = serializers.CharField(allow_null=True)
     cost_price = serializers.DecimalField(max_digits=10, decimal_places=3, allow_null=True)
     quantity = serializers.IntegerField(allow_null=True)
     trade_date = serializers.DateField(allow_null=True)

@@ -116,6 +116,22 @@ export const marketApi = {
   },
 }
 
+// 自选分组
+export const groupApi = {
+  list() {
+    return api.get('/stock-groups/')
+  },
+  create(name) {
+    return api.post('/stock-groups/', { name })
+  },
+  update(id, data) {
+    return api.patch(`/stock-groups/${id}/`, data)
+  },
+  remove(id) {
+    return api.delete(`/stock-groups/${id}/`)
+  },
+}
+
 // 价格提醒
 export const alertApi = {
   // 规则列表（含未读提醒数）

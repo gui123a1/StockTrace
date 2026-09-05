@@ -209,6 +209,8 @@ def _quote_row(stock, quote):
         'id': stock.id,
         'code': stock.code,
         'name': stock.name,
+        'group_id': stock.group_id,
+        'group_name': stock.group.name if stock.group_id else None,
         'cost_price': stock.cost_price,
         'quantity': stock.quantity,
     }
@@ -256,7 +258,7 @@ def _quote_row(stock, quote):
 @api_view(['GET'])
 def dashboard(request):
     """Dashboard 聚合：自选 + 每只最新日行情（2 次查询，避免 N+1）"""
-    stocks = list(Stock.objects.filter(is_active=True).order_by('code'))
+    stocks = list(Stock.objects.filter(is_active=True).select_related('group').order_by('code'))
     if not stocks:
         return Response([])
 
@@ -630,3 +632,63 @@ def screener_preset_detail(request, pk):
         return Response({'detail': '预设不存在'}, status=status.HTTP_404_NOT_FOUND)
     preset.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ============================================================
+# 自选分组
+# ============================================================
+
+def _group_row(group):
+    return {
+        'id': group.id,
+        'name': group.name,
+        'order': group.order,
+        'stock_count': group.stocks.filter(is_active=True).count(),
+        'created_at': group.created_at,
+    }
+
+
+@api_view(['GET', 'POST'])
+def stock_group_list(request):
+    """分组列表（含各组活跃股票数）/ 新建"""
+    from .models import StockGroup
+
+    if request.method == 'GET':
+        groups = StockGroup.objects.all()
+        return Response([_group_row(g) for g in groups])
+
+    name = (request.data.get('name') or '').strip()
+    if not name or len(name) > 50:
+        return Response({'detail': '分组名称必填且不超过 50 字'}, status=status.HTTP_400_BAD_REQUEST)
+    if StockGroup.objects.filter(name=name).exists():
+        return Response({'detail': f'分组「{name}」已存在'}, status=status.HTTP_409_CONFLICT)
+    group = StockGroup.objects.create(name=name)
+    return Response(_group_row(group), status=status.HTTP_201_CREATED)
+
+
+@api_view(['PATCH', 'DELETE'])
+def stock_group_detail(request, pk):
+    """重命名/调序（PATCH {name?, order?}）；删除分组后组内股票变回未分组"""
+    from .models import StockGroup
+
+    group = StockGroup.objects.filter(id=pk).first()
+    if group is None:
+        return Response({'detail': '分组不存在'}, status=status.HTTP_404_NOT_FOUND)
+    if request.method == 'DELETE':
+        group.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    name = request.data.get('name')
+    if name is not None:
+        name = str(name).strip()
+        if not name or len(name) > 50:
+            return Response({'detail': '分组名称不能为空且不超过 50 字'}, status=status.HTTP_400_BAD_REQUEST)
+        if StockGroup.objects.filter(name=name).exclude(id=group.id).exists():
+            return Response({'detail': f'分组「{name}」已存在'}, status=status.HTTP_409_CONFLICT)
+        group.name = name
+    if 'order' in request.data:
+        try:
+            group.order = int(request.data['order'])
+        except (TypeError, ValueError):
+            return Response({'detail': 'order 必须是整数'}, status=status.HTTP_400_BAD_REQUEST)
+    group.save()
+    return Response(_group_row(group))

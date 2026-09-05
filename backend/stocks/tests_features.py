@@ -533,3 +533,41 @@ class EtfHistSourceRoutingTests(SimpleTestCase):
 
         self.assertFalse(data['history']['available'])
         self.assertIsNone(data['price_performance']['return_5d'])
+
+
+class StockGroupApiTests(TestCase):
+    def test_group_crud_assign_and_ungroup_on_delete(self):
+        stock = Stock.objects.create(code='600000', name='浦发银行')
+
+        response = self.client.post('/api/stock-groups/', json.dumps({'name': '白马'}), content_type='application/json')
+        self.assertEqual(response.status_code, 201)
+        group_id = response.data['id']
+
+        # 重名 409
+        response = self.client.post('/api/stock-groups/', json.dumps({'name': '白马'}), content_type='application/json')
+        self.assertEqual(response.status_code, 409)
+
+        # 把股票划入分组
+        response = self.client.patch(f'/api/stocks/{stock.id}/', json.dumps({'group': group_id}), content_type='application/json')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['group'], group_id)
+
+        # 列表带活跃股票计数；dashboard 行携带分组信息
+        self.assertEqual(self.client.get('/api/stock-groups/').data[0]['stock_count'], 1)
+        dashboard_row = self.client.get('/api/dashboard/').data[0]
+        self.assertEqual(dashboard_row['group_id'], group_id)
+        self.assertEqual(dashboard_row['group_name'], '白马')
+
+        # 重命名
+        response = self.client.patch(f'/api/stock-groups/{group_id}/', json.dumps({'name': '价值'}), content_type='application/json')
+        self.assertEqual(response.data['name'], '价值')
+
+        # 删除分组 → 股票自动回到未分组
+        response = self.client.delete(f'/api/stock-groups/{group_id}/')
+        self.assertEqual(response.status_code, 204)
+        dashboard_row = self.client.get('/api/dashboard/').data[0]
+        self.assertIsNone(dashboard_row['group_id'])
+
+    def test_group_name_required(self):
+        response = self.client.post('/api/stock-groups/', json.dumps({'name': '  '}), content_type='application/json')
+        self.assertEqual(response.status_code, 400)
