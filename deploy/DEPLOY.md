@@ -55,12 +55,11 @@ sudo apt install -y python3.12 python3.12-venv nginx apache2-utils
 sudo mkdir -p /opt/stocktrace /etc/stocktrace /opt/stocktrace/staticfiles
 sudo chown -R www:www /opt/stocktrace
 
-# 虚拟环境
+# 虚拟环境（放在 backend/venv，与线上保持一致）
 cd /opt/stocktrace
-python3.12 -m venv venv
-source venv/bin/activate
+python3.12 -m venv backend/venv
+source backend/venv/bin/activate
 pip install -r backend/requirements.txt
-pip install gunicorn
 
 # 环境变量
 sudo cp deploy/env.example /etc/stocktrace/env
@@ -68,7 +67,7 @@ sudo nano /etc/stocktrace/env   # 填 SECRET_KEY、ALLOWED_HOSTS
 
 # 数据库
 cd /opt/stocktrace/backend
-source ../venv/bin/activate
+source ../backend/venv/bin/activate
 # 环境变量只对 systemd 进程自动生效，手动跑 manage.py 必须先加载：
 set -a; source /etc/stocktrace/env; set +a
 python manage.py migrate
@@ -110,7 +109,7 @@ cp /opt/stocktrace/backend/db.sqlite3 /opt/stocktrace/backend/db.sqlite3.bak.$(d
 # 保证 gunicorn_config.py、stocks/tasks.py、scheduler.py 等到位
 
 cd /opt/stocktrace
-source venv/bin/activate
+source backend/venv/bin/activate
 pip install -r backend/requirements.txt
 cd backend
 set -a; source /etc/stocktrace/env; set +a   # 手动 manage.py 必须加载环境变量

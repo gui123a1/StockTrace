@@ -3,12 +3,12 @@ Description=StockTrace Gunicorn
 After=network.target
 
 [Service]
-Type=simple
+Type=notify
 User=www
 Group=www
 WorkingDirectory=/opt/stocktrace/backend
 EnvironmentFile=/etc/stocktrace/env
-ExecStart=/opt/stocktrace/venv/bin/gunicorn \
+ExecStart=/opt/stocktrace/backend/venv/bin/gunicorn \
     --config /opt/stocktrace/backend/gunicorn_config.py \
     StockTrace.wsgi:application
 Restart=always
