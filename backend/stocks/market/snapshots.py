@@ -73,7 +73,45 @@ def save_daily_snapshots(trade_date=None):
     except Exception as e:
         logger.error(f"etf_share 快照落库失败: {e}")
 
+    # 大盘主力资金流：只落当日一行（预热任务已把该序列拉热，走缓存不再打上游）
+    try:
+        from . import flows
+        hist = flows.fetch_market_fund_flow_hist(days=5)
+        today_row = next(
+            (i for i in reversed(hist.get('items', [])) if i.get('date') == trade_date.isoformat()),
+            None,
+        )
+        if today_row:
+            MarketDailySnapshot.objects.update_or_create(
+                kind=MarketDailySnapshot.KIND_MARKET_FF,
+                trade_date=trade_date,
+                defaults={'payload': [today_row]},
+            )
+            saved[MarketDailySnapshot.KIND_MARKET_FF] = 1
+        else:
+            logger.warning(f"market_ff 快照当日无数据，不写行（{trade_date}）")
+    except Exception as e:
+        logger.error(f"market_ff 快照落库失败: {e}")
+
     return saved
+
+
+def market_ff_snapshot_rows(start_date=None, end_date=None):
+    """读取大盘资金流日度快照（升序 items 列表）；查库异常按无快照降级。"""
+    try:
+        qs = MarketDailySnapshot.objects.filter(kind=MarketDailySnapshot.KIND_MARKET_FF)
+        if start_date is not None:
+            qs = qs.filter(trade_date__gte=start_date)
+        if end_date is not None:
+            qs = qs.filter(trade_date__lte=end_date)
+        rows = []
+        for snap in qs.order_by('trade_date'):
+            for item in (snap.payload or []):
+                if item.get('date'):
+                    rows.append(item)
+        return rows
+    except Exception:
+        return []
 
 
 def _recent_trading_days(n, end_date=None):

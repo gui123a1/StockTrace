@@ -213,11 +213,12 @@ def fetch_market_fund_flow_hist(days=30, ttl=300, force=False):
 def get_market_fund_flow_window(window, ttl=300):
     """大盘主力资金流窗口聚合（东财 fflow 日线，secid=1.000001 上证指数）。
 
-    与 akshare 版 fetch_market_fund_flow_hist 数据同源但走自有抓取
-    （https 退避重试 + http 兜底）；上游深度约 120 个交易日，超出部分
-    以 coverage_start 如实标注。
+    快照优先：本地日度快照（收盘后落库）先垫底，上游成功时按日期覆盖/回补。
+    上游（push2his）挂掉时窗口仍可用——展示本地已积累的天数并如实提示；
+    上游深度约 120 个交易日，超出部分以 coverage_start 如实标注。
     """
     from .etf_flow import fetch_flow_klines, parse_flow_kline
+    from .snapshots import market_ff_snapshot_rows
 
     cache_key = period_cache_key('market_ff_win', window)
     cached = _cache_get(cache_key, ttl)
@@ -225,19 +226,42 @@ def get_market_fund_flow_window(window, ttl=300):
         return cached
 
     upstream_error = ''
-    coverage_start = None
-    all_rows = []
+    upstream_rows = []
     try:
         klines = fetch_flow_klines('1.000001')
-        all_rows = [r for r in (parse_flow_kline(k) for k in klines) if r]
-        if all_rows:
-            coverage_start = all_rows[0]['date']
+        upstream_rows = [r for r in (parse_flow_kline(k) for k in klines) if r]
     except Exception as e:  # noqa: BLE001  线路降级
         upstream_error = str(e)
         logger.warning('大盘资金流窗口获取失败: %s', e)
 
-    rows = [r for r in all_rows if window.contains(r['date'])]
+    # 合并：上游为主，快照补缺（上游挂了就全靠快照）
+    by_date = {r['date']: r for r in upstream_rows}
+    snap_all = market_ff_snapshot_rows()
+    snap_in_window = [
+        r for r in snap_all
+        if r['date'] not in by_date and window.contains(r['date'])
+    ]
+    rows = sorted(
+        list(by_date.values()) + snap_in_window,
+        key=lambda r: r['date'],
+    )
+    rows = [r for r in rows if window.contains(r['date'])]
+    # 覆盖起点取上游与快照中最早的一根（可能早于窗口起点，配合 truncated 语义）
+    all_dates = [r['date'] for r in upstream_rows] + [r['date'] for r in snap_all]
+    coverage_start = min(all_dates) if all_dates else None
     total = lambda key: round(sum(r.get(key) or 0 for r in rows), 2)  # noqa: E731
+
+    if upstream_rows:
+        message = ''
+    elif snap_in_window:
+        message = (
+            f'东财上游暂不可用，已展示本地日度快照积累的 {len(snap_in_window)} 个交易日'
+            '（每个收盘后自动积累，上游恢复后自动回补历史）'
+        )
+    elif upstream_error:
+        message = f'大盘资金流获取失败（{upstream_error}），稍后可重试'
+    else:
+        message = '区间内暂无数据'
 
     data = {
         'available': bool(rows),
@@ -255,19 +279,18 @@ def get_market_fund_flow_window(window, ttl=300):
             'inflow_days': sum(1 for r in rows if (r.get('main_net') or 0) > 0),
             'outflow_days': sum(1 for r in rows if (r.get('main_net') or 0) < 0),
         },
-        'message': (
-            f'大盘资金流获取失败（{upstream_error}），稍后可重试'
-            if upstream_error and not rows else
-            '' if rows else '区间内暂无数据'
-        ),
+        'message': message,
         'note': (
             f'区间起点早于上游覆盖范围，实际自 {coverage_start} 起计算'
             if coverage_start and window.start.isoformat() < coverage_start else ''
         ),
         'meta': _cache_meta(
-            cache_key, ttl, 'eastmoney.push2his fflow daykline (1.000001)', bool(rows),
+            cache_key, ttl,
+            'eastmoney.push2his fflow daykline + 本站日度快照' if snap_in_window
+            else 'eastmoney.push2his fflow daykline (1.000001)',
+            bool(rows),
             source_data_date=rows[-1]['date'] if rows else None,
-            disclaimer='历史主力净流入来自东方财富，上游仅提供最近约 120 个交易日。',
+            disclaimer='历史主力净流入来自东方财富；本地快照由收盘后预热自动积累。',
         ),
     }
     if rows:

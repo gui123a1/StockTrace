@@ -572,3 +572,82 @@ class StockGroupApiTests(TestCase):
     def test_group_name_required(self):
         response = self.client.post('/api/stock-groups/', json.dumps({'name': '  '}), content_type='application/json')
         self.assertEqual(response.status_code, 400)
+
+
+class MarketFundFlowSnapshotTests(TestCase):
+    """大盘主力资金流快照：收盘落库 + 窗口接口在上游挂掉时用快照兜底。"""
+
+    def setUp(self):
+        market._cache.clear()
+
+    def test_save_writes_market_ff_row_for_today(self):
+        today_row = {
+            'date': _BASE.isoformat(), 'main_net': 5.0, 'super_net': 1.0,
+            'large_net': 2.0, 'mid_net': -3.0, 'small_net': -5.0,
+        }
+        with patch(
+            'stocks.market.flows.fetch_market_fund_flow_hist',
+            return_value={'available': True, 'items': [today_row], 'message': '', 'source': 'x'},
+        ), patch(
+            'stocks.market.sectors.fetch_industry_fund_flow', return_value=[],
+        ), patch(
+            'stocks.market.sectors.fetch_concept_fund_flow', return_value=[],
+        ), patch(
+            'stocks.market.etf._normalized_etf_items', return_value=[],
+        ):
+            saved = snapshots.save_daily_snapshots(trade_date=_BASE)
+
+        self.assertEqual(saved[MarketDailySnapshot.KIND_MARKET_FF], 1)
+        row = MarketDailySnapshot.objects.get(
+            kind=MarketDailySnapshot.KIND_MARKET_FF, trade_date=_BASE,
+        )
+        self.assertEqual(row.payload[0]['main_net'], 5.0)
+
+    def test_window_falls_back_to_snapshots_when_upstream_down(self):
+        for offset, net in ((0, 100.0), (1, -50.0)):
+            MarketDailySnapshot.objects.create(
+                kind=MarketDailySnapshot.KIND_MARKET_FF,
+                trade_date=_BASE - timedelta(days=offset),
+                payload=[{'date': (_BASE - timedelta(days=offset)).isoformat(),
+                          'main_net': net, 'super_net': None, 'large_net': None,
+                          'mid_net': None, 'small_net': None}],
+            )
+        from stocks.market.periods import PeriodWindow
+
+        window = PeriodWindow('custom', _BASE - timedelta(days=1), _BASE)
+        with patch(
+            'stocks.market.etf_flow.fetch_flow_klines',
+            side_effect=RuntimeError('RemoteDisconnected'),
+        ):
+            data = market.get_market_fund_flow_window(window)
+
+        self.assertTrue(data['available'])
+        self.assertEqual(data['summary']['days'], 2)
+        self.assertEqual(data['summary']['total_main_net'], 50.0)
+        self.assertIn('快照', data['message'])
+        self.assertIn('本站日度快照', data['meta']['source'])
+
+    def test_window_snapshot_fills_missing_upstream_dates(self):
+        # 上游只有最新一天；快照补齐更早一天
+        MarketDailySnapshot.objects.create(
+            kind=MarketDailySnapshot.KIND_MARKET_FF,
+            trade_date=_BASE - timedelta(days=1),
+            payload=[{'date': (_BASE - timedelta(days=1)).isoformat(),
+                      'main_net': -50.0, 'super_net': None, 'large_net': None,
+                      'mid_net': None, 'small_net': None}],
+        )
+        from stocks.market.periods import PeriodWindow
+
+        window = PeriodWindow('custom', _BASE - timedelta(days=1), _BASE)
+        with patch('stocks.market.etf_flow.fetch_flow_klines') as mock_fetch:
+            mock_fetch.return_value = [
+                f'{_BASE.isoformat()},100.0,0.0,0.0,0.0,0.0,0,0,0,0,0,3000.0,0.5',
+            ]
+            data = market.get_market_fund_flow_window(window)
+
+        self.assertTrue(data['available'])
+        self.assertEqual(data['summary']['days'], 2)
+        self.assertEqual(data['summary']['total_main_net'], 50.0)
+        self.assertEqual(data['summary']['inflow_days'], 1)
+        self.assertEqual(data['summary']['outflow_days'], 1)
+        self.assertEqual(data['message'], '')  # 上游可用时不提示降级

@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 import requests
 
@@ -19,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 _VALUATION_TTL = 300
 _REQUEST_TIMEOUT = 5
+_FAIL_RETRY_SEC = 60  # 上游失败后的重试冷却，避免每股请求都挂着 5s 超时
+_last_fail_at = 0.0
 
 # qt.gtimg.cn 返回串按 ~ 分列（0 起）的字段位（已用 sz000001 实测核对）
 _IDX_TURNOVER = 38  # 换手率 %
@@ -80,11 +83,12 @@ def fetch_valuation_map(codes):
 
     cached = _cache_get('stock_valuation', _VALUATION_TTL) or {}
     missing = [c for c in wanted if c not in cached]
-    if missing:
+    if missing and (time.time() - _last_fail_at) > _FAIL_RETRY_SEC:
         try:
             cached.update(_fetch_raw(missing))
             _cache_set('stock_valuation', cached)
         except Exception as e:
             logger.warning(f"腾讯估值快照拉取失败（字段按 None 处理）: {e}")
+            globals()['_last_fail_at'] = time.time()
 
     return {c: cached[c] for c in wanted if c in cached}

@@ -432,6 +432,8 @@ class ValuationMapTests(SimpleTestCase):
     """腾讯估值快照解析（field 位已实测核对）。"""
 
     def setUp(self):
+        import stocks.ai.valuation as valuation
+        valuation._last_fail_at = 0.0
         from .market import _sources
         _sources._source_state.clear()
         from .market._cache import _cache

@@ -101,10 +101,12 @@ class MarketDailySnapshot(models.Model):
     KIND_INDUSTRY_FF = 'industry_ff'
     KIND_CONCEPT_FF = 'concept_ff'
     KIND_ETF_SHARE = 'etf_share'
+    KIND_MARKET_FF = 'market_ff'
     KIND_CHOICES = [
         (KIND_INDUSTRY_FF, '行业资金流'),
         (KIND_CONCEPT_FF, '概念资金流'),
         (KIND_ETF_SHARE, 'ETF份额'),
+        (KIND_MARKET_FF, '大盘主力资金流'),
     ]
 
     kind = models.CharField('快照类型', max_length=30, choices=KIND_CHOICES)

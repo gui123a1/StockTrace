@@ -85,3 +85,22 @@ class Command(BaseCommand):
             f'回填完成：累计写入 {written_days} 个 (行业, 日期) 快照；'
             f'空数据跳过 {skipped} 个行业；上游失败 {failed} 个行业'
         ))
+
+        # 大盘主力资金流历史回补（东财恢复后可用；此后每日由收盘任务自动积累）
+        try:
+            from stocks.market import flows
+            hist = flows.fetch_market_fund_flow_hist(days=130, force=True)
+            items = (hist or {}).get('items', [])
+            ff_written = 0
+            for item in items:
+                if not item.get('date'):
+                    continue
+                MarketDailySnapshot.objects.update_or_create(
+                    kind=MarketDailySnapshot.KIND_MARKET_FF,
+                    trade_date=date_cls.fromisoformat(item['date']),
+                    defaults={'payload': [item]},
+                )
+                ff_written += 1
+            self.stdout.write(self.style.SUCCESS(f'大盘资金流历史回补: {ff_written} 天'))
+        except Exception as e:
+            self.stderr.write(f'大盘资金流历史回补失败（上游恢复后重跑即可）: {e}')
