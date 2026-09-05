@@ -308,8 +308,9 @@ class ScreenerPresetApiTests(TestCase):
         self.assertEqual(response.status_code, 201)
 
         response = self.client.get('/api/screener/presets/')
-        self.assertEqual(len(response.data), 1)
-        self.assertEqual(response.data[0]['spec'], self.SPEC)
+        user_presets = [p for p in response.data if not p['builtin']]
+        self.assertEqual(len(user_presets), 1)
+        self.assertEqual(user_presets[0]['spec'], self.SPEC)
 
         # 同名 409
         response = self.client.post('/api/screener/presets/', json.dumps({'name': '强势股', 'spec': self.SPEC}), content_type='application/json')
