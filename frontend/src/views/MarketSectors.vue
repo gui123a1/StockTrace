@@ -137,7 +137,7 @@ onMounted(load)
           @update:model-value="switchPeriod"
         />
         <small class="period-note">
-          {{ period === 'day' ? '当日横截面' : period === '20d' ? '20 日累计（本站日度快照）' : '上游多日累计排行' }}
+          {{ period === 'day' ? '当日横截面' : period === '20d' ? '20 日累计（本站日度快照）' : '多日累计（快照优先，东财兜底）' }}
           · 1月/3月/1年待日度快照积累后开放
         </small>
       </div>
@@ -172,7 +172,7 @@ onMounted(load)
     <section class='table-card'>
       <div class='table-title'>
         <div><h2>{{ board === 'industry' ? '行业' : '概念' }}完整明细</h2><span>{{ pagination.total }} 条</span></div>
-        <small>{{ period === 'day' ? '当日资金快照' : period === '5d' ? '5日累计排行' : period === '10d' ? '10日累计排行' : '20日累计（日度快照）' }}</small>
+        <small>{{ period === 'day' ? '当日资金快照' : period === '5d' ? '5日累计（快照优先）' : period === '10d' ? '10日累计（快照优先）' : '20日累计（日度快照）' }}</small>
       </div>
       <div class='table-wrap'>
         <table>

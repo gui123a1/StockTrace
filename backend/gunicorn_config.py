@@ -2,7 +2,6 @@
 
 systemd already drops privileges with User=www — do NOT set user/group here.
 """
-import multiprocessing
 import os
 
 # Self-contained: works whether ExecStart passes the app or only -c

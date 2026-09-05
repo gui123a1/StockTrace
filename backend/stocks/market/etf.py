@@ -8,7 +8,7 @@ import akshare as ak
 
 from ._cache import _cache_get, _cache_meta, _cache_set, _now_str, _stale_or, _to_float
 from ._query import _paginate, _sort_items
-from ._sources import _safe_df_call
+from ._sources import _first_ok, _safe_df_call
 from . import snapshots
 
 # 国家队 / 汇金 常相关的宽基与政策向 ETF（6 位代码）
@@ -227,6 +227,32 @@ def get_etf_share_radar(
     }
 
 
+def _etf_sina_symbol(code):
+    """新浪 ETF 历史接口需要带交易所前缀：5 开头沪市、1 开头深市。"""
+    return ('sh' if str(code).startswith('5') else 'sz') + str(code)
+
+
+def _parse_sina_etf_hist(df):
+    """新浪 ETF 日线（date/open/high/low/close/volume，英文列）→ 统一 item。
+
+    新浪不提供成交额/涨跌幅/换手率，如实为 None，不推算凑数。
+    """
+    items = []
+    for _, row in df.iterrows():
+        items.append({
+            'date': str(row.get('date', ''))[:10],
+            'open': _to_float(row.get('open')),
+            'close': _to_float(row.get('close')),
+            'high': _to_float(row.get('high')),
+            'low': _to_float(row.get('low')),
+            'volume': _to_float(row.get('volume')),
+            'turnover': None,
+            'change_pct': None,
+            'turnover_rate': None,
+        })
+    return items
+
+
 def _etf_history(code, range_name='3m', ttl=1200):
     cache_key = f'etf_history_{code}_{range_name}'
     cached = _cache_get(cache_key, ttl)
@@ -236,32 +262,39 @@ def _etf_history(code, range_name='3m', ttl=1200):
     days = {'1w': 12, '1m': 45, '3m': 120, '6m': 240, '1y': 400}[range_name]
     end = datetime.now().date()
     start = end - timedelta(days=days)
-    df = _safe_df_call(
-        ak.fund_etf_hist_em,
-        symbol=code,
-        period='daily',
-        start_date=start.strftime('%Y%m%d'),
-        end_date=end.strftime('%Y%m%d'),
-        adjust='',
-        source_name=f'em_etf_history_{code}',
-    )
+    # 多源路由：东财优先；东财失败/限流时切新浪（新浪无成交额/换手率，字段如实为 None）
+    df, source = _first_ok([
+        (lambda: ak.fund_etf_hist_em(
+            symbol=code, period='daily',
+            start_date=start.strftime('%Y%m%d'), end_date=end.strftime('%Y%m%d'),
+            adjust='',
+        ), 'em_etf_hist'),
+        (lambda: ak.fund_etf_hist_sina(symbol=_etf_sina_symbol(code)), 'sina_etf_hist'),
+    ])
     if df is None or df.empty:
         return _stale_or(cache_key, [])
 
-    items = []
-    for _, row in df.iterrows():
-        items.append({
-            'date': str(row.get('日期', ''))[:10],
-            'open': _to_float(row.get('开盘')),
-            'close': _to_float(row.get('收盘')),
-            'high': _to_float(row.get('最高')),
-            'low': _to_float(row.get('最低')),
-            'volume': _to_float(row.get('成交量')),
-            'turnover': _to_float(row.get('成交额')),
-            'change_pct': _to_float(row.get('涨跌幅')),
-            'turnover_rate': _to_float(row.get('换手率')),
-        })
+    if source == 'em_etf_hist':
+        items = []
+        for _, row in df.iterrows():
+            items.append({
+                'date': str(row.get('日期', ''))[:10],
+                'open': _to_float(row.get('开盘')),
+                'close': _to_float(row.get('收盘')),
+                'high': _to_float(row.get('最高')),
+                'low': _to_float(row.get('最低')),
+                'volume': _to_float(row.get('成交量')),
+                'turnover': _to_float(row.get('成交额')),
+                'change_pct': _to_float(row.get('涨跌幅')),
+                'turnover_rate': _to_float(row.get('换手率')),
+            })
+    else:
+        items = _parse_sina_etf_hist(df)
+        # 新浪返回全量历史，按区间截断（东财由 start_date/end_date 服务端过滤）
+        items = [item for item in items if item['date'] >= start.isoformat()]
+
     _cache_set(cache_key, items)
+    _cache_set(f'{cache_key}_src', source)
     return items
 
 
@@ -324,10 +357,10 @@ def get_etf_detail(code, range_name='3m'):
             'meta': _cache_meta(
                 history_key,
                 1200,
-                'akshare.fund_etf_hist_em',
+                f'akshare.{_stale_or(f"{history_key}_src", "fund_etf_hist_em")}',
                 bool(history),
                 source_data_date=max(history_dates) if history_dates else None,
-                disclaimer='仅为 ETF 市场价格日线；不包含历史份额。',
+                disclaimer='仅为 ETF 市场价格日线；不包含历史份额。新浪备源无成交额/换手率，如实为空。',
             ),
             'items': history,
         },

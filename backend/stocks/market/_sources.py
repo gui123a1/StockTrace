@@ -70,6 +70,31 @@ def _safe_df_call(fn, *args, source_name=None, **kwargs):
         return None
 
 
+def _first_ok(candidates, *args, **kwargs):
+    """多源路由：按优先级逐个尝试候选源，返回第一个成功的结果。
+
+    candidates: [(fn, source_name), ...]，fn 用 *args/**kwargs 调用。
+    每个候选都受冷却约束（冷却中的直接跳过），成败都计入冷却统计；
+    上一个源失败会立即尝试下一个，不重试同一个源。
+    返回 (result, source_name)；全部失败返回 (None, None)。
+    """
+    for fn, name in candidates:
+        if _source_is_cool(name):
+            logger.debug(f"跳过冷却中的数据源 {name}")
+            continue
+        try:
+            result = fn(*args, **kwargs)
+            if result is None or (isinstance(result, pd.DataFrame) and result.empty):
+                _source_mark_fail(name, 'empty')
+                continue
+            _source_mark_ok(name)
+            return result, name
+        except Exception as e:
+            _source_mark_fail(name, e)
+            continue
+    return None, None
+
+
 def get_source_health():
     """调试用：各源冷却状态。"""
     now = time.time()

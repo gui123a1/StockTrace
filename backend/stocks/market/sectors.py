@@ -21,10 +21,11 @@ _SECTOR_SORT_FIELDS = {
     'leader_pct': 'leader_pct',
 }
 
-# 上游原生多日排行（东财 clist 接口，净额单位为元）；20d 由日度快照供数
+# 5d/10d 有两条路径：日度快照优先（不依赖东财），快照不足时退回东财原生排行；
+# 20d 无上游可退，只能由快照供数。东财 rank/hist 接口（push2）近年限流频繁。
 _SECTOR_RANK_INDICATORS = {'5d': '5日', '10d': '10日'}
 _SECTOR_PERIODS = ('day', '5d', '10d', '20d')
-_SNAPSHOT_PERIOD_DAYS = {'20d': 20}
+_SNAPSHOT_PERIOD_DAYS = {'5d': 5, '10d': 10, '20d': 20}
 
 
 def _parse_sector_rank_table(df):
@@ -214,11 +215,20 @@ def get_sector_rotation(board='industry', period='day', q='', sort='net', order=
         raise ValueError('不支持的板块排序字段')
     if order not in ('asc', 'desc'):
         raise ValueError('order 必须是 asc 或 desc')
-    if period in _SNAPSHOT_PERIOD_DAYS and sort != 'net':
-        raise ValueError(f'{period} 轮动由日度快照供数，仅支持按净额排序')
 
-    if period in _SNAPSHOT_PERIOD_DAYS:
-        return _snapshot_rotation(board, period, q=q, order=order, page=page, page_size=page_size)
+    if period in _SNAPSHOT_PERIOD_DAYS and sort != 'net':
+        # 快照只含净额；5d/10d 可退回东财原生排行（含涨跌幅），20d 无上游可退
+        if period == '20d':
+            raise ValueError('20d 轮动由日度快照供数，仅支持按净额排序')
+
+    if period in _SNAPSHOT_PERIOD_DAYS and sort == 'net':
+        # 快照优先：窗口齐全就不碰东财 push2（限流/502 高发）
+        snapshot_result = _snapshot_rotation(
+            board, period, q=q, order=order, page=page, page_size=page_size,
+        )
+        if snapshot_result['available'] or period == '20d':
+            return snapshot_result
+        # 5d/10d 快照不足 → 落到下方东财原生排行兜底
 
     if board == 'industry':
         loader = fetch_industry_fund_flow
@@ -253,7 +263,10 @@ def _snapshot_rotation(board, period, q='', order='desc', page=1, page_size=50):
             else MarketDailySnapshot.KIND_CONCEPT_FF)
     n = _SNAPSHOT_PERIOD_DAYS[period]
     nets, covered = snapshots.sector_multiday_nets(kind, n)
-    latest = snapshots._latest_snapshot(kind)
+    try:
+        latest = snapshots._latest_snapshot(kind)
+    except Exception:
+        latest = None
 
     if nets is None:
         items, message = [], (
