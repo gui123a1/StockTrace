@@ -17,10 +17,11 @@
 ## 待办与已知问题（接手从这里开始）
 
 1. ~~大盘资金流/北向区间的前端入口未接~~ ✅ 已完成（650f166/4aec72f，总览资金卡与机构北向卡均接 PeriodPicker）。
-2. **日度快照积累（二期，用户已确认要做后暂停）**：板块 5/10/20 日轮动、ETF 份额 1/5/20 日变化需要新建 `MarketDailySnapshot` 类快照表 + 收盘后落库任务 + 回填；相关讨论见 git log 的 2026-08-30 记录。
+2. ~~日度快照积累（二期）~~ ✅ 代码已完成（2026-09-05）：`MarketDailySnapshot` 表 + 收盘预热任务末尾落库（幂等）+ 板块 20 日轮动（`/market/sectors/?period=20d`）+ ETF 份额 1/5/20 日变化（雷达/详情）；「窗口内快照齐全才算数，缺天不补」。行业资金流历史可用 `python manage.py backfill_market_snapshots --days 60` 回填（VPS 执行），概念/ETF 份额只能向前积累，约 1 个月凑齐首个 20 日窗口。
 3. **已知环境问题（非代码）**：本机代理（Clash 7890）对 `push2his.eastmoney.com` 的 TLS 干扰已从「间歇性」加重到「基本不可用」（https/http 均被断连，绕过代理直连同样被干扰）——本地开发时大盘资金流、国家队 ETF 资金流、板块 5d/10d、ETF 价格历史这几类端点会如实报「暂不可用」，点重试偶发收敛；逻辑正确性由单测锁定（parse/聚合/取窗/缓存）。VPS 国内线路不受影响。8000 端口被用户另一 uvicorn 服务占用，本地后端约定用 8001。
-4. **HTTPS 回源 + 限流的 VPS 收尾**：`deploy/nginx-stocktrace.conf` 模板与 `deploy/DEPLOY.md` 第 5 节已就绪（80→443 跳转、Cloudflare Full (strict)、真实 IP 限流 10r/s burst 20），线上仍是 Flexible 明文回源；需在 VPS 执行 DEPLOY.md 第 5 节（签发 Origin 证书、替换 conf、CF 后台切 Full (strict)）后销项。
-5. 小项：前端主包 gzip ~57 kB 可再分割；`handoff_cn.md`/`handoff.md` 为 v1.01 时代文档，仅考古。
+4. ~~HTTPS 回源 + 限流的 VPS 收尾~~ ✅ 已完成（2026-09-05）：Origin 证书装好、conf 替换、CF 已切 Full (strict)，外测 401 + 日志确认 HTTP/2 回源与真实 IP 限流生效。可选后续：防火墙 443 只放行 CF 网段。
+5. 小项：前端主包 gzip ~60 kB 可再分割；`handoff_cn.md`/`handoff.md` 为 v1.01 时代文档，仅考古。
+6. **2026-09-05 功能包待部署验证**：快照积累（上条）、价格提醒（`PriceAlert`/`AlertEvent` + 盘中/收盘评估 + 可选 `STOCKTRACE_PUSH_URL` 推送）、持仓成本盈亏（Stock.cost_price/quantity + 看板统计）、选股预设（`/api/screener/presets/`）、AiCallLog 90 天清理。后端 101 测试过；VPS 同步 + migrate + 前端 build 后销项。
 
 ## 2026-09-04 数据准确性核对（全页面实拉交叉核对）
 
