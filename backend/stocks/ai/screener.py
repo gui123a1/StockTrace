@@ -21,14 +21,17 @@ from dataclasses import dataclass
 
 from ..models import Stock
 
-# 计算多日指标所需的最大回看根数（60日涨跌幅需要 61 根：基准+最新）
-MAX_LOOKBACK = 61
+# 计算多日指标所需的最大回看根数（MACD 的 EMA26+DEA9 收敛需要较长预热）
+MAX_LOOKBACK = 140
 
 # 布尔类字段（值 1=成立 / 0=不成立），前端渲染为「是/否」下拉
 BOOL_FIELDS = {
     'above_ma5', 'above_ma10', 'above_ma20', 'above_ma60',
-    'ma5_gt_ma10', 'ma5_gt_ma20',
-    'new_high_20d', 'new_low_20d',
+    'ma5_gt_ma10', 'ma5_gt_ma20', 'ma10_gt_ma20',
+    'new_high_20d', 'new_low_20d', 'new_high_60d', 'new_low_60d',
+    'macd_dif_gt_dea', 'macd_golden_cross', 'macd_dead_cross', 'macd_dif_gt_zero',
+    'kdj_golden_cross', 'kdj_dead_cross',
+    'above_boll_mid', 'above_boll_upper', 'below_boll_lower',
 }
 
 OPS = {'gt', 'gte', 'lt', 'lte', 'eq', 'between'}
@@ -157,6 +160,156 @@ def _up_days(ctx):
     return days
 
 
+# ============================================================
+# 技术指标（MACD / KDJ / RSI / BOLL）
+# 全部由落库日线现算；参数与国内软件常用口径一致。
+# 历史根数不足以稳定收敛时不给值（None），不硬算。
+# ============================================================
+
+_MACD_MIN_BARS = 35   # EMA26 + DEA9 的最低预热
+_KDJ_MIN_BARS = 12    # RSV9 + K/D 递推预热
+_BOLL_N = 20
+
+
+def _ema_series(values, n):
+    """EMA（首值作种子，α=2/(n+1)）。"""
+    alpha = 2.0 / (n + 1)
+    out = [values[0]]
+    ema = values[0]
+    for v in values[1:]:
+        ema = alpha * v + (1 - alpha) * ema
+        out.append(ema)
+    return out
+
+
+def _indicators(ctx):
+    """一次性算好全部技术指标并记忆在 ctx['ind']；返回 dict（可能部分为 None）。"""
+    if ctx.get('ind') is not None:
+        return ctx['ind']
+    ind = {}
+    bars = ctx['bars']
+    closes = [_f(b.close_price) for b in bars]
+    highs = [_f(b.high_price) for b in bars]
+    lows = [_f(b.low_price) for b in bars]
+
+    # ---- MACD(12, 26, 9)，柱 = 2*(DIF-DEA)（国内口径） ----
+    if len(closes) >= _MACD_MIN_BARS and None not in closes:
+        ema12 = _ema_series(closes, 12)
+        ema26 = _ema_series(closes, 26)
+        dif = [a - b for a, b in zip(ema12, ema26)]
+        dea = _ema_series(dif, 9)
+        ind['macd_dif'] = dif[-1]
+        ind['macd_dea'] = dea[-1]
+        ind['macd_hist'] = 2 * (dif[-1] - dea[-1])
+        ind['macd_dif_gt_dea'] = 1 if dif[-1] >= dea[-1] else 0
+        ind['macd_dif_gt_zero'] = 1 if dif[-1] > 0 else 0
+        ind['macd_golden_cross'] = 1 if dif[-1] >= dea[-1] and dif[-2] < dea[-2] else 0
+        ind['macd_dead_cross'] = 1 if dif[-1] <= dea[-1] and dif[-2] > dea[-2] else 0
+    else:
+        ind.update({k: None for k in (
+            'macd_dif', 'macd_dea', 'macd_hist',
+            'macd_dif_gt_dea', 'macd_golden_cross', 'macd_dead_cross',
+            'macd_dif_gt_zero',
+        )})
+
+    # ---- KDJ(9, 3, 3)，SMA(X,3,1) 递推，K/D 种子 50 ----
+    if len(closes) >= _KDJ_MIN_BARS and None not in closes \
+            and None not in highs and None not in lows:
+        k, d = 50.0, 50.0
+        for i in range(len(bars)):
+            hh = max(highs[max(0, i - 8):i + 1])
+            ll = min(lows[max(0, i - 8):i + 1])
+            rsv = 50.0 if hh == ll else (closes[i] - ll) / (hh - ll) * 100
+            k = (2 * k + rsv) / 3
+            d = (2 * d + k) / 3
+        ind['kdj_k'] = k
+        ind['kdj_d'] = d
+        ind['kdj_j'] = 3 * k - 2 * d
+        # 金叉/死叉用倒数第二根状态
+        k2, d2 = 50.0, 50.0
+        for i in range(len(bars) - 1):
+            hh = max(highs[max(0, i - 8):i + 1])
+            ll = min(lows[max(0, i - 8):i + 1])
+            rsv = 50.0 if hh == ll else (closes[i] - ll) / (hh - ll) * 100
+            k2 = (2 * k2 + rsv) / 3
+            d2 = (2 * d2 + k2) / 3
+        ind['kdj_golden_cross'] = 1 if k >= d and k2 < d2 else 0
+        ind['kdj_dead_cross'] = 1 if k <= d and k2 > d2 else 0
+    else:
+        ind.update({k: None for k in (
+            'kdj_k', 'kdj_d', 'kdj_j', 'kdj_golden_cross', 'kdj_dead_cross',
+        )})
+
+    # ---- RSI(6 / 14)，Wilder 平滑 ----
+    def _rsi(n):
+        if len(closes) < n + 1:
+            return None
+        gains, losses = 0.0, 0.0
+        # 先用前 n 个差分做种子均值
+        deltas = [closes[i] - closes[i - 1] for i in range(1, n + 1)]
+        gains = sum(max(d, 0) for d in deltas) / n
+        losses = sum(-min(d, 0) for d in deltas) / n
+        for i in range(n + 1, len(closes)):
+            delta = closes[i] - closes[i - 1]
+            gains = (gains * (n - 1) + max(delta, 0)) / n
+            losses = (losses * (n - 1) + max(-delta, 0)) / n
+        if gains + losses == 0:
+            return None
+        return gains / (gains + losses) * 100
+
+    ind['rsi_6'] = _rsi(6)
+    ind['rsi_14'] = _rsi(14)
+
+    # ---- BOLL(20, 2) ----
+    boll_closes = closes[-_BOLL_N:]
+    if len(boll_closes) == _BOLL_N and None not in boll_closes:
+        mid = sum(boll_closes) / _BOLL_N
+        std = (sum((c - mid) ** 2 for c in boll_closes) / _BOLL_N) ** 0.5
+        last = closes[-1]
+        ind['above_boll_mid'] = 1 if last >= mid else 0
+        ind['above_boll_upper'] = 1 if last >= mid + 2 * std else 0
+        ind['below_boll_lower'] = 1 if last <= mid - 2 * std else 0
+    else:
+        ind.update({k: None for k in (
+            'above_boll_mid', 'above_boll_upper', 'below_boll_lower',
+        )})
+
+    ctx['ind'] = ind
+    return ind
+
+
+def _macd(field):
+    def getter(ctx):
+        return _indicators(ctx).get(field)
+    return getter
+
+
+def _kdj(field):
+    def getter(ctx):
+        return _indicators(ctx).get(field)
+    return getter
+
+
+def _rsi(field):
+    def getter(ctx):
+        return _indicators(ctx).get(field)
+    return getter
+
+
+def _boll(field):
+    def getter(ctx):
+        return _indicators(ctx).get(field)
+    return getter
+
+
+def _valuation(field):
+    """估值字段：来自腾讯实时快照（ctx['val']），上游不可用即 None。"""
+    def getter(ctx):
+        val = ctx.get('val') or {}
+        return val.get(field)
+    return getter
+
+
 # 可筛选字段：key -> (中文名, 取值函数, 说明)
 # 取值函数输入 ctx（dict：quote=最新日线, bars=升序日线列表），返回 float/None
 FIELDS = {
@@ -187,6 +340,33 @@ FIELDS = {
     'ma5_gt_ma20': ('5日线在20日线上方', _ma_gt(5, 20), '1是/0否'),
     'new_high_20d': ('创20日新高', _new_extreme(20, high=True), '1是/0否'),
     'new_low_20d': ('创20日新低', _new_extreme(20, high=False), '1是/0否'),
+    'new_high_60d': ('创60日新高', _new_extreme(60, high=True), '1是/0否'),
+    'new_low_60d': ('创60日新低', _new_extreme(60, high=False), '1是/0否'),
+    'ma10_gt_ma20': ('10日线在20日线上方', _ma_gt(10, 20), '1是/0否'),
+    # ---- 技术指标（由落库日线现算，国内常用口径） ----
+    'macd_dif': ('MACD DIF', _macd('macd_dif'), '值'),
+    'macd_dea': ('MACD DEA', _macd('macd_dea'), '值'),
+    'macd_hist': ('MACD柱', _macd('macd_hist'), '值'),
+    'macd_dif_gt_dea': ('DIF在DEA上方', _macd('macd_dif_gt_dea'), '1是/0否'),
+    'macd_golden_cross': ('MACD金叉', _macd('macd_golden_cross'), '1是/0否'),
+    'macd_dead_cross': ('MACD死叉', _macd('macd_dead_cross'), '1是/0否'),
+    'macd_dif_gt_zero': ('DIF在零轴上方', _macd('macd_dif_gt_zero'), '1是/0否'),
+    'kdj_k': ('KDJ K值', _kdj('kdj_k'), '值'),
+    'kdj_d': ('KDJ D值', _kdj('kdj_d'), '值'),
+    'kdj_j': ('KDJ J值', _kdj('kdj_j'), '值'),
+    'kdj_golden_cross': ('KDJ金叉', _kdj('kdj_golden_cross'), '1是/0否'),
+    'kdj_dead_cross': ('KDJ死叉', _kdj('kdj_dead_cross'), '1是/0否'),
+    'rsi_6': ('RSI(6)', _rsi('rsi_6'), '值0-100'),
+    'rsi_14': ('RSI(14)', _rsi('rsi_14'), '值0-100'),
+    'above_boll_mid': ('收盘在布林中轨上方', _boll('above_boll_mid'), '1是/0否'),
+    'above_boll_upper': ('收盘触及布林上轨', _boll('above_boll_upper'), '1是/0否'),
+    'below_boll_lower': ('收盘触及布林下轨', _boll('below_boll_lower'), '1是/0否'),
+    # ---- 估值快照（腾讯实时行情，上游不可用即无值） ----
+    'turnover_rate': ('换手率', _valuation('turnover_rate'), '%'),
+    'pe_ttm': ('市盈率(TTM)', _valuation('pe_ttm'), '倍'),
+    'pb': ('市净率', _valuation('pb'), '倍'),
+    'float_mv': ('流通市值', _valuation('float_mv'), '元'),
+    'total_mv': ('总市值', _valuation('total_mv'), '元'),
 }
 
 
@@ -198,12 +378,22 @@ def _history_ctx(stock, quote):
 
 
 def _latest_contexts():
-    """每只活跃股票的 (stock, 最新日线 ctx)；当日无行情的股票不参与。"""
+    """每只活跃股票的 (stock, 最新日线 ctx)；当日无行情的股票不参与。
+
+    估值快照（腾讯）对全部自选股一次批量拉取，随 ctx 分发。
+    """
+    from .valuation import fetch_valuation_map
+
     result = []
-    for stock in Stock.objects.filter(is_active=True):
+    stocks = list(Stock.objects.filter(is_active=True))
+    val_map = fetch_valuation_map([s.code for s in stocks]) if stocks else {}
+    for stock in stocks:
         quote = stock.daily_quotes.order_by('-trade_date').first()
-        if quote is not None:
-            result.append((stock, _history_ctx(stock, quote)))
+        if quote is None:
+            continue
+        ctx = _history_ctx(stock, quote)
+        ctx['val'] = val_map.get(stock.code)
+        result.append((stock, ctx))
     return result
 
 

@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from unittest.mock import patch
 
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 
 from .models import AiCallLog, AiProvider, DailyQuote, Stock
@@ -348,3 +348,121 @@ class ScreenerDerivedFieldsTests(TestCase):
             run_screener({'logic': 'all', 'conditions': [
                 {'field': 'above_ma20', 'op': 'gt', 'value': 0.5},
             ]})
+
+
+class ScreenerTechIndicatorTests(TestCase):
+    """技术指标字段：MACD/KDJ/RSI/BOLL 的口径与边界。"""
+
+    def setUp(self):
+        self.stock = Stock.objects.create(code='600010', name='指标测试')
+
+    def _bars(self, closes):
+        _make_bars(self.stock, closes)
+
+    def test_macd_bullish_uptrend(self):
+        # 单调上行序列：DIF>0、DIF>DEA、金叉发生在早期（此处只验多头态）
+        _make_bars(self.stock, [10.0 + i * 0.1 for i in range(40)])
+        rows = run_screener({'logic': 'all', 'conditions': [
+            {'field': 'macd_dif_gt_zero', 'op': 'eq', 'value': 1},
+            {'field': 'macd_dif_gt_dea', 'op': 'eq', 'value': 1},
+        ]})
+        self.assertEqual([r['code'] for r in rows], ['600010'])
+
+    def test_macd_insufficient_history_is_unknown(self):
+        _make_bars(self.stock, [10.0] * 10)
+        rows = run_screener({'logic': 'all', 'conditions': [
+            {'field': 'macd_dif_gt_dea', 'op': 'eq', 'value': 0},
+        ]})
+        self.assertEqual(rows, [])  # 未知≠0
+
+    def test_kdj_oversold_j_low(self):
+        # 连续下跌后小幅反弹：J 应处于低位
+        closes = [20.0 - i * 0.2 for i in range(15)] + [17.05]
+        _make_bars(self.stock, closes)
+        rows = run_screener({'logic': 'all', 'conditions': [
+            {'field': 'kdj_j', 'op': 'lt', 'value': 30},
+        ]})
+        self.assertEqual([r['code'] for r in rows], ['600010'])
+
+    def test_rsi_extremes(self):
+        # 单调上行 → RSI 应接近 100
+        _make_bars(self.stock, [10.0 + i * 0.1 for i in range(20)])
+        rows = run_screener({'logic': 'all', 'conditions': [
+            {'field': 'rsi_14', 'op': 'gt', 'value': 80},
+        ]})
+        self.assertEqual([r['code'] for r in rows], ['600010'])
+
+    def test_boll_lower_band_on_drop(self):
+        # 19 根平盘 + 最后一根大跌 → 收盘应触及下轨
+        _make_bars(self.stock, [10.0] * 19 + [9.0])
+        rows = run_screener({'logic': 'all', 'conditions': [
+            {'field': 'below_boll_lower', 'op': 'eq', 'value': 1},
+        ]})
+        self.assertEqual([r['code'] for r in rows], ['600010'])
+
+    def test_new_high_60d(self):
+        _make_bars(self.stock, [10.0 + i * 0.05 for i in range(61)])
+        rows = run_screener({'logic': 'all', 'conditions': [
+            {'field': 'new_high_60d', 'op': 'eq', 'value': 1},
+        ]})
+        self.assertEqual([r['code'] for r in rows], ['600010'])
+
+
+class BuiltinStrategyTests(TestCase):
+    """内置策略模板：全部 spec 必须可执行（与 run_screener 同一套校验）。"""
+
+    def test_all_builtin_specs_are_valid(self):
+        from .ai.screener import _validate
+        from .ai.strategies import BUILTIN_STRATEGIES
+
+        self.assertGreaterEqual(len(BUILTIN_STRATEGIES), 10)
+        for s in BUILTIN_STRATEGIES:
+            _validate(s['spec'])  # 不合法会抛 ConditionError
+
+    def test_builtin_listed_by_api_and_unremovable_route(self):
+        response = self.client.get('/api/screener/presets/')
+        names = [p['name'] for p in response.data]
+        self.assertIn('均线多头排列', names)
+        first = response.data[0]
+        self.assertTrue(first['builtin'])
+        self.assertIsNone(first['id'])
+
+
+class ValuationMapTests(SimpleTestCase):
+    """腾讯估值快照解析（field 位已实测核对）。"""
+
+    def setUp(self):
+        from .market import _sources
+        _sources._source_state.clear()
+        from .market._cache import _cache
+        _cache.clear()
+
+    @patch('stocks.ai.valuation.requests.get')
+    def test_parse_batch_response(self, mock_get):
+        from .ai.valuation import fetch_valuation_map
+
+        # 腾讯 v_sz600000="51~浦发~600000~...~换手38~PE39~...~流通市值44~总市值45~PB46..."
+        fields = [''] * 50
+        fields[1], fields[2] = '测试股', '600000'
+        fields[38], fields[39] = '0.42', '5.31'
+        fields[44], fields[45], fields[46] = '2307.34', '2307.36', '0.49'
+        body = f'v_sh600000="{"~".join(fields)}";'
+        mock_resp = mock_get.return_value
+        mock_resp.content = body.encode('gbk')
+        mock_resp.raise_for_status = lambda: None
+
+        result = fetch_valuation_map(['600000'])
+        row = result['600000']
+        self.assertEqual(row['turnover_rate'], 0.42)
+        self.assertEqual(row['pe_ttm'], 5.31)
+        self.assertEqual(row['pb'], 0.49)
+        self.assertAlmostEqual(row['total_mv'], 2307.36e8)  # 亿 → 元
+        self.assertAlmostEqual(row['float_mv'], 2307.34e8)
+
+    @patch('stocks.ai.valuation.requests.get')
+    def test_upstream_failure_returns_empty_map(self, mock_get):
+        from .ai.valuation import fetch_valuation_map
+
+        mock_get.side_effect = RuntimeError('timeout')
+        result = fetch_valuation_map(['600000'])
+        self.assertEqual(result, {})  # 字段将按 None 处理，不伪造

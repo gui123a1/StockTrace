@@ -33,12 +33,40 @@ const FIELDS = [
   { key: 'ma5_gt_ma20', label: '5日线>20日线' },
   { key: 'new_high_20d', label: '创20日新高' },
   { key: 'new_low_20d', label: '创20日新低' },
+  { key: 'new_high_60d', label: '创60日新高' },
+  { key: 'new_low_60d', label: '创60日新低' },
+  { key: 'ma10_gt_ma20', label: '10日线>20日线' },
+  { key: 'macd_dif', label: 'MACD DIF' },
+  { key: 'macd_dea', label: 'MACD DEA' },
+  { key: 'macd_hist', label: 'MACD柱' },
+  { key: 'macd_dif_gt_dea', label: 'DIF在DEA上方' },
+  { key: 'macd_golden_cross', label: 'MACD金叉' },
+  { key: 'macd_dead_cross', label: 'MACD死叉' },
+  { key: 'macd_dif_gt_zero', label: 'DIF在零轴上方' },
+  { key: 'kdj_k', label: 'KDJ K值' },
+  { key: 'kdj_d', label: 'KDJ D值' },
+  { key: 'kdj_j', label: 'KDJ J值' },
+  { key: 'kdj_golden_cross', label: 'KDJ金叉' },
+  { key: 'kdj_dead_cross', label: 'KDJ死叉' },
+  { key: 'rsi_6', label: 'RSI(6)' },
+  { key: 'rsi_14', label: 'RSI(14)' },
+  { key: 'above_boll_mid', label: '在布林中轨上方' },
+  { key: 'above_boll_upper', label: '触及布林上轨' },
+  { key: 'below_boll_lower', label: '触及布林下轨' },
+  { key: 'turnover_rate', label: '换手率(%)' },
+  { key: 'pe_ttm', label: '市盈率TTM(倍)' },
+  { key: 'pb', label: '市净率(倍)' },
+  { key: 'float_mv', label: '流通市值(元)' },
+  { key: 'total_mv', label: '总市值(元)' },
 ]
 // 布尔字段：值只能是 1（是）/ 0（否），与后端 BOOL_FIELDS 保持一致
 const BOOL_FIELDS = new Set([
   'above_ma5', 'above_ma10', 'above_ma20', 'above_ma60',
-  'ma5_gt_ma10', 'ma5_gt_ma20',
-  'new_high_20d', 'new_low_20d',
+  'ma5_gt_ma10', 'ma5_gt_ma20', 'ma10_gt_ma20',
+  'new_high_20d', 'new_low_20d', 'new_high_60d', 'new_low_60d',
+  'macd_dif_gt_dea', 'macd_golden_cross', 'macd_dead_cross', 'macd_dif_gt_zero',
+  'kdj_golden_cross', 'kdj_dead_cross',
+  'above_boll_mid', 'above_boll_upper', 'below_boll_lower',
 ])
 const OPS = [
   { key: 'gt', label: '>' },
@@ -190,14 +218,18 @@ function applyPreset(p) {
   notice.value = `已载入预设「${p.name}」，点「执行筛选」运行`
 }
 
-function onPresetSelect(name) {
-  const p = presets.value.find(x => String(x.id) === String(name))
+function presetKey(p) {
+  return p.builtin ? `builtin:${p.name}` : `user:${p.id}`
+}
+
+function onPresetSelect(key) {
+  const p = presets.value.find(x => presetKey(x) === key)
   if (p) applyPreset(p)
 }
 
 async function deletePreset() {
-  if (!selectedPreset.value) return
-  const p = presets.value.find(x => String(x.id) === String(selectedPreset.value))
+  if (!selectedPreset.value || selectedPreset.value.startsWith('builtin:')) return
+  const p = presets.value.find(x => presetKey(x) === selectedPreset.value)
   if (!p || !confirm(`删除预设「${p.name}」？`)) return
   try {
     await presetApi.remove(p.id)
@@ -357,12 +389,14 @@ function fmtTurnover(v) {
         </button>
       </div>
       <div class="preset-row">
-        <label>预设</label>
+        <label>策略 / 预设</label>
         <select v-model="selectedPreset" @change="onPresetSelect(selectedPreset)">
-          <option value="" disabled>选择已保存的条件组合</option>
-          <option v-for="p in presets" :key="p.id" :value="p.id">{{ p.name }}</option>
+          <option value="" disabled>选择内置策略或已保存的预设</option>
+          <option v-for="p in presets" :key="presetKey(p)" :value="presetKey(p)">
+            {{ p.builtin ? '★ ' + p.name : p.name }}
+          </option>
         </select>
-        <button class="btn small" :disabled="!selectedPreset" @click="deletePreset">删除所选</button>
+        <button class="btn small" :disabled="!selectedPreset || selectedPreset.startsWith('builtin:')" @click="deletePreset">删除所选</button>
         <input v-model="presetName" maxlength="50" placeholder="当前条件存为预设（名称）" class="preset-name" />
         <button class="btn small" @click="savePreset">保存预设</button>
       </div>

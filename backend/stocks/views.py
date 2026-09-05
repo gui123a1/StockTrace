@@ -600,9 +600,20 @@ def screener_preset_list(request):
     from .models import ScreenerPreset
 
     if request.method == 'GET':
+        from .ai.strategies import BUILTIN_STRATEGIES
+
         presets = ScreenerPreset.objects.all()
-        return Response([{
+        builtins = [{
+            'id': None,
+            'builtin': True,
+            'name': s['name'],
+            'desc': s.get('desc', ''),
+            'spec': s['spec'],
+            'created_at': None,
+        } for s in BUILTIN_STRATEGIES]
+        return Response(builtins + [{
             'id': preset.id,
+            'builtin': False,
             'name': preset.name,
             'spec': preset.spec,
             'created_at': preset.created_at,
