@@ -1,9 +1,10 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { stockApi, dashboardApi } from '../api/stocks.js'
 import StockTable from '../components/StockTable.vue'
 import StockWatchlist from '../components/StockWatchlist.vue'
+import AlertPanel from '../components/AlertPanel.vue'
 
 const router = useRouter()
 const dashboardData = ref([])
@@ -12,6 +13,21 @@ const fetchLoading = ref(false)
 const fetchMessage = ref('')
 let refreshTimer = null
 let pollTimer = null
+
+// 持仓汇总：只统计填了成本价的股票；数据来自看板真实行情
+const portfolio = computed(() => {
+  let cost = 0
+  let value = 0
+  let count = 0
+  for (const item of dashboardData.value) {
+    if (item.cost_price == null || item.quantity == null || item.close_price == null) continue
+    cost += Number(item.cost_price) * Number(item.quantity)
+    value += Number(item.close_price) * Number(item.quantity)
+    count += 1
+  }
+  if (!count) return null
+  return { cost, value, pnl: value - cost, count }
+})
 
 async function loadDashboard() {
   loading.value = true
@@ -121,6 +137,9 @@ onUnmounted(() => {
     <div class="dashboard-header">
       <h1>股票监控面板</h1>
       <div class="header-actions">
+        <span v-if="portfolio" class="portfolio" :class="portfolio.pnl >= 0 ? 'up' : 'down'">
+          持仓{{ portfolio.count }}只 · 盈亏 {{ portfolio.pnl >= 0 ? '+' : '' }}{{ portfolio.pnl.toFixed(2) }}
+        </span>
         <span v-if="fetchMessage" class="fetch-msg">{{ fetchMessage }}</span>
         <button
           class="btn btn-primary"
@@ -134,12 +153,15 @@ onUnmounted(() => {
 
     <StockWatchlist @refresh="onWatchlistRefresh" />
 
+    <AlertPanel :stocks="dashboardData" />
+
     <StockTable
       :data="dashboardData"
       :loading="loading"
       @row-click="goToDetail"
       @ai-click="goToDetail"
       @delete="removeStock"
+      @refresh="onWatchlistRefresh"
     />
   </div>
 </template>
@@ -166,6 +188,19 @@ onUnmounted(() => {
 .fetch-msg {
   color: #aaa;
   font-size: 13px;
+}
+
+.portfolio {
+  font-size: 14px;
+  font-weight: bold;
+}
+
+.portfolio.up {
+  color: #e94560;
+}
+
+.portfolio.down {
+  color: #00c853;
 }
 
 .btn {

@@ -1,7 +1,7 @@
 <script setup>
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { aiApi, stockApi } from '../api/stocks.js'
+import { aiApi, presetApi, stockApi } from '../api/stocks.js'
 import { formatPct, formatNum, pctClass } from '../utils/format.js'
 
 const router = useRouter()
@@ -87,6 +87,73 @@ function buildSpec() {
 
 const orderBy = ref('')
 const orderDir = ref('desc')
+
+// 预设（保存/加载/删除当前条件组合）
+const presets = ref([])
+const presetName = ref('')
+const selectedPreset = ref('')
+
+async function loadPresets() {
+  try {
+    presets.value = (await presetApi.list()).data
+  } catch (e) {
+    console.error('加载预设失败', e)
+  }
+}
+
+async function savePreset() {
+  const name = presetName.value.trim()
+  const spec = buildSpec()
+  if (!name || !spec) {
+    errorMsg.value = !name ? '请输入预设名称' : '请先填写至少一个完整条件'
+    return
+  }
+  try {
+    await presetApi.create(name, spec)
+    presetName.value = ''
+    selectedPreset.value = ''
+    notice.value = `预设「${name}」已保存`
+    await loadPresets()
+  } catch (e) {
+    errorMsg.value = '保存预设失败：' + errText(e)
+  }
+}
+
+function applyPreset(p) {
+  logic.value = p.spec.logic || 'all'
+  conditions.value = (p.spec.conditions || []).map(c => ({
+    field: c.field,
+    op: c.op,
+    value: c.op === 'between' ? c.value?.[0] : c.value,
+    value2: c.op === 'between' ? c.value?.[1] : undefined,
+  }))
+  if (!conditions.value.length) {
+    conditions.value = [{ field: 'change_pct', op: 'gt', value: '' }]
+  }
+  orderBy.value = p.spec.order_by || ''
+  orderDir.value = p.spec.order_dir || 'desc'
+  notice.value = `已载入预设「${p.name}」，点「执行筛选」运行`
+}
+
+function onPresetSelect(name) {
+  const p = presets.value.find(x => String(x.id) === String(name))
+  if (p) applyPreset(p)
+}
+
+async function deletePreset() {
+  if (!selectedPreset.value) return
+  const p = presets.value.find(x => String(x.id) === String(selectedPreset.value))
+  if (!p || !confirm(`删除预设「${p.name}」？`)) return
+  try {
+    await presetApi.remove(p.id)
+    selectedPreset.value = ''
+    await loadPresets()
+  } catch {
+    errorMsg.value = '删除预设失败'
+  }
+}
+
+onMounted(loadPresets)
 
 async function runManual() {
   errorMsg.value = ''
@@ -228,6 +295,16 @@ function fmtTurnover(v) {
         <button class="btn primary" :disabled="manualLoading" @click="runManual">
           {{ manualLoading ? '筛选中…' : '执行筛选' }}
         </button>
+      </div>
+      <div class="preset-row">
+        <label>预设</label>
+        <select v-model="selectedPreset" @change="onPresetSelect(selectedPreset)">
+          <option value="" disabled>选择已保存的条件组合</option>
+          <option v-for="p in presets" :key="p.id" :value="p.id">{{ p.name }}</option>
+        </select>
+        <button class="btn small" :disabled="!selectedPreset" @click="deletePreset">删除所选</button>
+        <input v-model="presetName" maxlength="50" placeholder="当前条件存为预设（名称）" class="preset-name" />
+        <button class="btn small" @click="savePreset">保存预设</button>
       </div>
     </div>
 
@@ -378,6 +455,31 @@ function fmtTurnover(v) {
 .manual-meta label {
   font-size: 13px;
   color: #aaa;
+}
+.preset-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #2a2a44;
+}
+.preset-row label {
+  font-size: 13px;
+  color: #aaa;
+}
+.preset-row select,
+.preset-row input {
+  padding: 6px 8px;
+  border: 1px solid #3a3a5a;
+  border-radius: 6px;
+  background: #14142a;
+  color: #eee;
+  font-size: 13px;
+}
+.preset-row input.preset-name {
+  min-width: 200px;
 }
 .btn {
   padding: 6px 14px;

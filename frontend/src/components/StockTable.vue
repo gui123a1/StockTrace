@@ -1,15 +1,18 @@
 <script setup>
 import { ref } from 'vue'
 import { formatPct, formatNum, pctClass } from '../utils/format.js'
+import { stockApi } from '../api/stocks.js'
 
 defineProps({
   data: { type: Array, default: () => [] },
   loading: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['row-click', 'delete', 'ai-click'])
+const emit = defineEmits(['row-click', 'delete', 'ai-click', 'refresh'])
 
 const expandedRows = ref(new Set())
+const costDrafts = ref({})
+const savingIds = ref(new Set())
 
 function toggleRow(code) {
   if (expandedRows.value.has(code)) {
@@ -21,6 +24,48 @@ function toggleRow(code) {
 
 function isExpanded(code) {
   return expandedRows.value.has(code)
+}
+
+// 盈亏：仅填了成本价的行参与；数据全部来自看板真实行情
+function pnlOf(item) {
+  if (item.cost_price == null || item.quantity == null || item.close_price == null) return null
+  return (Number(item.close_price) - Number(item.cost_price)) * Number(item.quantity)
+}
+
+function draftOf(item, key) {
+  if (!(item.code in costDrafts.value)) {
+    costDrafts.value[item.code] = {
+      cost_price: item.cost_price ?? '',
+      quantity: item.quantity ?? '',
+    }
+  }
+  return costDrafts.value[item.code][key]
+}
+
+function setDraft(item, key, value) {
+  if (!(item.code in costDrafts.value)) {
+    costDrafts.value[item.code] = {
+      cost_price: item.cost_price ?? '',
+      quantity: item.quantity ?? '',
+    }
+  }
+  costDrafts.value[item.code][key] = value
+}
+
+async function saveCost(item) {
+  const draft = costDrafts.value[item.code] || {}
+  const cost = draft.cost_price === '' ? null : Number(draft.cost_price)
+  const qty = draft.quantity === '' ? null : Number(draft.quantity)
+  if (cost !== null && (Number.isNaN(cost) || cost <= 0)) return
+  savingIds.value.add(item.code)
+  try {
+    await stockApi.update(item.id, { cost_price: cost, quantity: qty })
+    emit('refresh')
+  } catch {
+    alert('保存持仓失败，请重试')
+  } finally {
+    savingIds.value.delete(item.code)
+  }
 }
 
 function handleGoDetail(e, item) {
@@ -53,6 +98,7 @@ async function handleDelete(e, item) {
           <th>现价</th>
           <th>涨跌幅</th>
           <th>涨跌价</th>
+          <th>持仓盈亏</th>
           <th class="th-actions">操作</th>
         </tr>
       </thead>
@@ -77,6 +123,9 @@ async function handleDelete(e, item) {
             <td :class="pctClass(item.open_close_diff)">
               {{ formatNum(item.open_close_diff) }}
             </td>
+            <td :class="pctClass(pnlOf(item))">
+              {{ pnlOf(item) == null ? '-' : formatNum(pnlOf(item)) }}
+            </td>
             <td class="actions">
               <button class="btn-kline" @click="handleGoDetail($event, item)" title="查看K线图">K线</button>
               <button class="btn-delete" @click="handleDelete($event, item)" title="取消关注">✕</button>
@@ -84,7 +133,7 @@ async function handleDelete(e, item) {
           </tr>
           <!-- 展开行 -->
           <tr v-if="isExpanded(item.code)" class="expand-row">
-            <td colspan="8">
+            <td colspan="9">
               <div class="expand-content">
                 <div class="expand-grid">
                   <div class="expand-item">
@@ -111,6 +160,22 @@ async function handleDelete(e, item) {
                 <div class="expand-actions">
                   <button class="btn-kline-lg" @click="handleGoDetail($event, item)">查看K线图 →</button>
                   <button class="btn-kline-lg btn-ai-lg" @click="handleAi($event, item)">AI 分析</button>
+                </div>
+                <div class="cost-row">
+                  <span class="elabel">持仓（可选，填后参与盈亏统计）</span>
+                  <input
+                    type="number" step="any" placeholder="成本价"
+                    :value="draftOf(item, 'cost_price')"
+                    @input="setDraft(item, 'cost_price', $event.target.value)"
+                  />
+                  <input
+                    type="number" step="1" placeholder="持股数"
+                    :value="draftOf(item, 'quantity')"
+                    @input="setDraft(item, 'quantity', $event.target.value)"
+                  />
+                  <button class="btn-kline-lg" :disabled="savingIds.has(item.code)" @click="saveCost(item)">
+                    {{ savingIds.has(item.code) ? '保存中…' : '保存持仓' }}
+                  </button>
                 </div>
               </div>
             </td>
@@ -263,6 +328,28 @@ async function handleDelete(e, item) {
 
 .expand-actions {
   margin-top: 12px;
+}
+
+.cost-row {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cost-row .elabel {
+  font-size: 12px;
+}
+
+.cost-row input {
+  width: 110px;
+  padding: 6px 10px;
+  border: 1px solid #3a3a5a;
+  border-radius: 6px;
+  background: #14142a;
+  color: #eee;
+  font-size: 13px;
 }
 
 /* K线按钮（折叠行内） */

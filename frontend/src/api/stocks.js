@@ -32,6 +32,11 @@ export const stockApi = {
     return api.delete(`/stocks/${id}/`)
   },
 
+  // 更新关注项（持仓成本价 / 持股数等）
+  update(id, data) {
+    return api.patch(`/stocks/${id}/`, data)
+  },
+
   // 获取日K数据
   getDaily(id, params = {}) {
     return api.get(`/stocks/${id}/daily/`, { params })
@@ -108,6 +113,44 @@ export const marketApi = {
   getInstitutions(code) {
     const params = code ? { code } : {}
     return api.get('/market/institutions/', { ...marketTimeout, params })
+  },
+}
+
+// 价格提醒
+export const alertApi = {
+  // 规则列表（含未读提醒数）
+  list() {
+    return api.get('/alerts/')
+  },
+  create(data) {
+    return api.post('/alerts/', data)
+  },
+  update(id, data) {
+    return api.patch(`/alerts/${id}/`, data)
+  },
+  remove(id) {
+    return api.delete(`/alerts/${id}/`)
+  },
+  // 触发记录；params 传 { unread: 1 } 只看未读
+  events(params = {}) {
+    return api.get('/alerts/events/', { params })
+  },
+  // 标记已读；data 传 { ids: [...] } 或 {} 全部已读
+  markRead(data = {}) {
+    return api.post('/alerts/events/read/', data)
+  },
+}
+
+// 条件选股预设
+export const presetApi = {
+  list() {
+    return api.get('/screener/presets/')
+  },
+  create(name, spec) {
+    return api.post('/screener/presets/', { name, spec })
+  },
+  remove(id) {
+    return api.delete(`/screener/presets/${id}/`)
   },
 }
 

@@ -17,7 +17,7 @@ const loading = ref(false)
 const error = ref('')
 const data = ref(null)
 const board = ref(route.query.board === 'concept' ? 'concept' : 'industry')
-const period = ref(route.query.period === '5d' || route.query.period === '10d' ? route.query.period : 'day')
+const period = ref(['5d', '10d', '20d'].includes(route.query.period) ? route.query.period : 'day')
 const q = ref(route.query.q || '')
 const sort = ref(route.query.sort || 'net')
 const order = ref(route.query.order === 'asc' ? 'asc' : 'desc')
@@ -85,6 +85,7 @@ function changePage(delta) {
 }
 
 function sortBy(field) {
+  if (period.value === '20d' && field !== 'net') return
   if (sort.value === field) order.value = order.value === 'desc' ? 'asc' : 'desc'
   else {
     sort.value = field
@@ -126,7 +127,7 @@ onMounted(load)
       <div>
         <PeriodPicker
           :model-value="period"
-          :options="[['day', '当日'], ['5d', '5日'], ['10d', '10日']]"
+          :options="[['day', '当日'], ['5d', '5日'], ['10d', '10日'], ['20d', '20日']]"
           :disabled-options="[
             ['1m', '1月', '需要日度快照积累后开放'],
             ['3m', '3月', '需要日度快照积累后开放'],
@@ -135,13 +136,18 @@ onMounted(load)
           :loading="loading"
           @update:model-value="switchPeriod"
         />
-        <small class="period-note">{{ period === 'day' ? '当日横截面' : '上游多日累计排行' }} · 1月/3月/1年待日度快照积累后开放</small>
+        <small class="period-note">
+          {{ period === 'day' ? '当日横截面' : period === '20d' ? '20 日累计（本站日度快照）' : '上游多日累计排行' }}
+          · 1月/3月/1年待日度快照积累后开放
+        </small>
       </div>
       <form class='search-form' @submit.prevent='load(true)'>
         <input v-model.trim='q' aria-label='搜索板块或领涨股' placeholder='搜索板块或领涨股' />
         <button type='submit'>查询</button>
       </form>
     </section>
+
+    <div v-if="period === '20d' && data?.message" class="snapshot-note">{{ data.message }}</div>
 
     <section class='snapshot-strip' aria-label='资金概览'>
       <div><span>板块样本</span><strong>{{ summary.sample_count ?? '-' }}</strong></div>
@@ -166,7 +172,7 @@ onMounted(load)
     <section class='table-card'>
       <div class='table-title'>
         <div><h2>{{ board === 'industry' ? '行业' : '概念' }}完整明细</h2><span>{{ pagination.total }} 条</span></div>
-        <small>{{ period === 'day' ? '当日资金快照' : period === '5d' ? '5日累计排行' : '10日累计排行' }}</small>
+        <small>{{ period === 'day' ? '当日资金快照' : period === '5d' ? '5日累计排行' : period === '10d' ? '10日累计排行' : '20日累计（日度快照）' }}</small>
       </div>
       <div class='table-wrap'>
         <table>
@@ -356,6 +362,16 @@ button:disabled {
   margin-top: 5px;
   color: #6b7987;
   font-size: 10px;
+}
+
+.snapshot-note {
+  margin: 10px 0;
+  padding: 10px 14px;
+  border: 1px solid #4a3c1a;
+  border-radius: 6px;
+  background: #2a2413;
+  color: #d9b96a;
+  font-size: 13px;
 }
 
 .snapshot-strip {

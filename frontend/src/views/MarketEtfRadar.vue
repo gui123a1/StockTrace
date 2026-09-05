@@ -29,6 +29,7 @@ const ranks = [
 const items = computed(() => data.value?.items || [])
 const summary = computed(() => data.value?.summary || {})
 const pagination = computed(() => data.value?.pagination || { page: 1, total_pages: 1, total: 0 })
+const supported = computed(() => data.value?.supported_metrics || {})
 
 function syncUrl() {
   router.replace({ query: {
@@ -83,7 +84,7 @@ onMounted(() => load())
   <div class="page">
     <MarketSubNav />
     <div class="page-header">
-      <div><div class="title-line"><h1>ETF 份额雷达</h1><span v-if="data?.meta?.source_data_date" class="date-chip">数据截至 {{ data.meta.source_data_date }}</span></div><p>股票/宽基规则筛选与全市场 ETF 快照研究台 · 份额为最新快照，历史份额变化需积累日度快照后开放</p></div>
+      <div><div class="title-line"><h1>ETF 份额雷达</h1><span v-if="data?.meta?.source_data_date" class="date-chip">数据截至 {{ data.meta.source_data_date }}</span></div><p>股票/宽基规则筛选与全市场 ETF 快照研究台 · 份额 1/5/20 日变化由本站日度快照计算，窗口齐全后自动显示</p></div>
       <button class="primary" @click="load()" :disabled="loading">{{ loading ? '加载中...' : '刷新' }}</button>
     </div>
     <div v-if="error" class="error-box">{{ error }}</div>
@@ -123,13 +124,20 @@ onMounted(() => load())
             <thead><tr>
               <th>#</th><th>代码</th><th>名称</th><th>最新价</th><th @click="sortBy('change_pct')">涨跌幅 {{ sortMark('change_pct') }}</th>
               <th @click="sortBy('turnover')">成交额 {{ sortMark('turnover') }}</th><th @click="sortBy('main_net')">主力净流入 {{ sortMark('main_net') }}</th>
-              <th @click="sortBy('share')">最新份额 {{ sortMark('share') }}</th><th @click="sortBy('market_cap')">总市值 {{ sortMark('market_cap') }}</th><th @click="sortBy('turnover_rate')">换手 {{ sortMark('turnover_rate') }}</th><th @click="sortBy('discount_rate')">折溢价 {{ sortMark('discount_rate') }}</th>
+              <th @click="sortBy('share')">最新份额 {{ sortMark('share') }}</th>
+              <th v-if="supported.share_change_1d">份额1日</th>
+              <th v-if="supported.share_change_5d">份额5日</th>
+              <th v-if="supported.share_change_20d">份额20日</th>
+              <th @click="sortBy('market_cap')">总市值 {{ sortMark('market_cap') }}</th><th @click="sortBy('turnover_rate')">换手 {{ sortMark('turnover_rate') }}</th><th @click="sortBy('discount_rate')">折溢价 {{ sortMark('discount_rate') }}</th>
             </tr></thead>
             <tbody>
               <tr v-for="(row, i) in items" :key="row.code" :class="{ selected: selectedCode === row.code }" tabindex="0" @click="select(row)" @keyup.enter="select(row)">
                 <td>{{ (pagination.page - 1) * pagination.page_size + i + 1 }}</td><td class="code">{{ row.code }}</td><td class="name">{{ row.name }}</td><td>{{ formatNum(row.price) }}</td>
                 <td :class="pctClass(row.change_pct)">{{ formatPct(row.change_pct) }}</td><td>{{ formatAmount(row.turnover) }}</td>
                 <td :class="pctClass(row.main_net)">{{ formatAmount(row.main_net) }}</td><td>{{ formatShare(row.share) }}</td>
+                <td v-if="supported.share_change_1d" :class="pctClass(row.share_chg_1d)">{{ formatShare(row.share_chg_1d) }}</td>
+                <td v-if="supported.share_change_5d" :class="pctClass(row.share_chg_5d)">{{ formatShare(row.share_chg_5d) }}</td>
+                <td v-if="supported.share_change_20d" :class="pctClass(row.share_chg_20d)">{{ formatShare(row.share_chg_20d) }}</td>
                 <td>{{ formatAmount(row.market_cap) }}</td><td>{{ formatPct(row.turnover_rate) }}</td><td :class="pctClass(row.discount_rate)">{{ formatPct(row.discount_rate) }}</td>
               </tr>
             </tbody>

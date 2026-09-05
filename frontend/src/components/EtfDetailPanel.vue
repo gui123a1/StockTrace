@@ -93,7 +93,15 @@ watch(range, load)
         <div><span>20日</span><b :class="pctClass(performance.return_20d)">{{ formatPct(performance.return_20d) }}</b></div>
         <div><span>60日</span><b :class="pctClass(performance.return_60d)">{{ formatPct(performance.return_60d) }}</b></div>
       </div>
-      <div class="share-note"><b>份额历史暂不可用</b><p>{{ data.share_metrics?.message }}</p></div>
+      <div class="share-note">
+        <b>份额变化{{ data.share_metrics?.availability === 'daily_snapshot' ? '（日度快照）' : '' }}</b>
+        <p>{{ data.share_metrics?.message }}</p>
+        <div v-if="data.share_metrics?.availability === 'daily_snapshot'" class="share-chgs">
+          <span>1日 <b :class="pctClass(data.share_metrics.share_chg_1d)">{{ formatShare(data.share_metrics.share_chg_1d) }}</b></span>
+          <span>5日 <b :class="pctClass(data.share_metrics.share_chg_5d)">{{ formatShare(data.share_metrics.share_chg_5d) }}</b></span>
+          <span>20日 <b :class="pctClass(data.share_metrics.share_chg_20d)">{{ formatShare(data.share_metrics.share_chg_20d) }}</b></span>
+        </div>
+      </div>
       <MarketDataStatus v-if="data.history?.meta" :meta="data.history.meta" />
       <MarketDataStatus :meta="data.meta" />
     </template>
@@ -114,5 +122,5 @@ h2 { margin: 0; font-size: 18px; } header span { color: #71809a; font-size: 12px
 .history-empty { min-height: 170px; margin: 10px 0; display: grid; place-content: center; text-align: center; border: 1px dashed #33445f; border-radius: 7px; color: #9ba8bd; }
 .history-empty p { margin: 5px 0 0; color: #68758d; font-size: 12px; }
 .returns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }.returns div { background: #0c172a; padding: 8px; text-align: center; border-radius: 6px; }.returns span { color: #68758d; font-size: 11px; display: block; }
-.share-note { margin: 12px 0; padding: 10px; border: 1px dashed #33445f; border-radius: 7px; color: #a8b3c7; font-size: 12px; }.share-note p { margin: 4px 0 0; color: #6e7b93; line-height: 1.5; }
+.share-note { margin: 12px 0; padding: 10px; border: 1px dashed #33445f; border-radius: 7px; color: #a8b3c7; font-size: 12px; }.share-note p { margin: 4px 0 0; color: #6e7b93; line-height: 1.5; }.share-chgs { display: flex; gap: 12px; margin-top: 8px; }.share-chgs span { color: #6e7b93; }.share-chgs b { margin-left: 4px; }
 </style>
