@@ -45,7 +45,8 @@ class AiProviderViewSet(viewsets.ModelViewSet):
 
 
 def _get_active_provider():
-    provider = AiProvider.objects.filter(is_enabled=True).first()
+    # 显式按录入顺序取第一个启用的服务商，多个启用时行为可预期
+    provider = AiProvider.objects.filter(is_enabled=True).order_by('pk').first()
     if provider is None:
         return None, ('未配置可用的 AI 服务商，请先在设置页添加')
     try:
