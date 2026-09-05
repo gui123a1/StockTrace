@@ -205,11 +205,15 @@ class StockViewSet(viewsets.ModelViewSet):
 
 
 def _quote_row(stock, quote):
+    base = {
+        'id': stock.id,
+        'code': stock.code,
+        'name': stock.name,
+        'cost_price': stock.cost_price,
+        'quantity': stock.quantity,
+    }
     if quote is None:
-        return {
-            'id': stock.id,
-            'code': stock.code,
-            'name': stock.name,
+        base.update({
             'trade_date': None,
             'open_price': None,
             'close_price': None,
@@ -226,11 +230,9 @@ def _quote_row(stock, quote):
             'change_pct': None,
             'volume': None,
             'turnover': None,
-        }
-    return {
-        'id': stock.id,
-        'code': stock.code,
-        'name': stock.name,
+        })
+        return base
+    base.update({
         'trade_date': quote.trade_date,
         'open_price': quote.open_price,
         'close_price': quote.close_price,
@@ -247,7 +249,8 @@ def _quote_row(stock, quote):
         'change_pct': quote.change_pct,
         'volume': quote.volume,
         'turnover': quote.turnover,
-    }
+    })
+    return base
 
 
 @api_view(['GET'])
@@ -459,3 +462,171 @@ def market_institutions(request):
             {'detail': f'获取机构持仓失败: {e}'},
             status=status.HTTP_502_BAD_GATEWAY,
         )
+
+
+# ============================================================
+# 价格提醒
+# ============================================================
+
+def _alert_row(alert):
+    return {
+        'id': alert.id,
+        'stock_id': alert.stock_id,
+        'code': alert.stock.code,
+        'name': alert.stock.name,
+        'rule_type': alert.rule_type,
+        'rule_display': alert.get_rule_type_display(),
+        'threshold': alert.threshold,
+        'note': alert.note,
+        'is_active': alert.is_active,
+        'last_triggered_at': alert.last_triggered_at,
+        'created_at': alert.created_at,
+    }
+
+
+def _alert_rule_error(stock_id, rule_type, threshold_raw):
+    """校验创建提醒的入参；通过返回 None，否则返回错误消息。"""
+    from decimal import Decimal, InvalidOperation
+
+    from .models import PriceAlert as _PA
+
+    if not stock_id:
+        return '缺少 stock_id'
+    if not Stock.objects.filter(id=stock_id, is_active=True).exists():
+        return 'stock_id 不存在或未关注'
+    if rule_type not in dict(_PA.RULE_CHOICES):
+        return f'rule_type 不支持，可选：{", ".join(k for k, _ in _PA.RULE_CHOICES)}'
+    try:
+        threshold = Decimal(str(threshold_raw))
+    except (TypeError, InvalidOperation):
+        return 'threshold 必须是数字'
+    if rule_type in (_PA.PRICE_ABOVE, _PA.PRICE_BELOW) and threshold <= 0:
+        return '价格阈值必须大于 0'
+    if rule_type in (_PA.DAILY_PCT_ABOVE, _PA.DAILY_PCT_BELOW) and abs(threshold) == 0:
+        return '涨跌幅阈值不能为 0'
+    return None
+
+
+@api_view(['GET', 'POST'])
+def alert_list(request):
+    """提醒规则列表 / 创建（同一股同一规则类型允许并存，由用户自己管理）"""
+    from .models import AlertEvent, PriceAlert
+
+    if request.method == 'GET':
+        alerts = PriceAlert.objects.select_related('stock').all()
+        unread = AlertEvent.objects.filter(is_read=False).count()
+        return Response({'unread_count': unread, 'items': [_alert_row(a) for a in alerts]})
+
+    stock_id = request.data.get('stock_id')
+    rule_type = request.data.get('rule_type')
+    error = _alert_rule_error(stock_id, rule_type, request.data.get('threshold'))
+    if error:
+        return Response({'detail': error}, status=status.HTTP_400_BAD_REQUEST)
+    alert = PriceAlert.objects.create(
+        stock_id=stock_id,
+        rule_type=rule_type,
+        threshold=request.data.get('threshold'),
+        note=(request.data.get('note') or '').strip()[:100],
+    )
+    return Response(_alert_row(alert), status=status.HTTP_201_CREATED)
+
+
+@api_view(['PATCH', 'DELETE'])
+def alert_detail(request, pk):
+    """启用/停用（PATCH {is_active}）或删除提醒规则"""
+    from .models import PriceAlert
+
+    alert = PriceAlert.objects.filter(id=pk).select_related('stock').first()
+    if alert is None:
+        return Response({'detail': '提醒不存在'}, status=status.HTTP_404_NOT_FOUND)
+    if request.method == 'DELETE':
+        alert.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    if 'is_active' in request.data:
+        alert.is_active = bool(request.data['is_active'])
+        alert.save(update_fields=['is_active'])
+    if 'note' in request.data:
+        alert.note = (request.data.get('note') or '').strip()[:100]
+        alert.save(update_fields=['note'])
+    return Response(_alert_row(alert))
+
+
+@api_view(['GET'])
+def alert_event_list(request):
+    """提醒触发记录（最近 100 条）；?unread=1 只看未读"""
+    from .models import AlertEvent
+
+    events = AlertEvent.objects.select_related('alert', 'stock')
+    if request.query_params.get('unread') in ('1', 'true'):
+        events = events.filter(is_read=False)
+    return Response([{
+        'id': event.id,
+        'alert_id': event.alert_id,
+        'stock_id': event.stock_id,
+        'code': event.stock.code if event.stock else None,
+        'name': event.stock.name if event.stock else None,
+        'message': event.message,
+        'trade_date': event.trade_date,
+        'is_read': event.is_read,
+        'created_at': event.created_at,
+    } for event in events[:100]])
+
+
+@api_view(['POST'])
+def alert_event_read(request):
+    """标记已读：POST {ids: [..]} 或不传 ids 全部已读"""
+    from .models import AlertEvent
+
+    ids = request.data.get('ids')
+    qs = AlertEvent.objects.all()
+    if ids is not None:
+        if not isinstance(ids, list):
+            return Response({'detail': 'ids 必须是数组'}, status=status.HTTP_400_BAD_REQUEST)
+        qs = qs.filter(id__in=ids)
+    updated = qs.filter(is_read=False).update(is_read=True)
+    return Response({'marked': updated})
+
+
+# ============================================================
+# 条件选股预设
+# ============================================================
+
+@api_view(['GET', 'POST'])
+def screener_preset_list(request):
+    """预设列表 / 保存（spec 用与执行完全相同的校验规则，保存即可执行）"""
+    from .ai.screener import ConditionError, _validate
+    from .models import ScreenerPreset
+
+    if request.method == 'GET':
+        presets = ScreenerPreset.objects.all()
+        return Response([{
+            'id': preset.id,
+            'name': preset.name,
+            'spec': preset.spec,
+            'created_at': preset.created_at,
+        } for preset in presets])
+
+    name = (request.data.get('name') or '').strip()
+    spec = request.data.get('spec')
+    if not name or len(name) > 50:
+        return Response({'detail': '预设名称必填且不超过 50 字'}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        _validate(spec)
+    except ConditionError as e:
+        return Response({'detail': f'筛选条件不合法：{e}'}, status=status.HTTP_400_BAD_REQUEST)
+    if ScreenerPreset.objects.filter(name=name).exists():
+        return Response({'detail': f'预设「{name}」已存在'}, status=status.HTTP_409_CONFLICT)
+    preset = ScreenerPreset.objects.create(name=name, spec=spec)
+    return Response({'id': preset.id, 'name': preset.name, 'spec': preset.spec},
+                    status=status.HTTP_201_CREATED)
+
+
+@api_view(['DELETE'])
+def screener_preset_detail(request, pk):
+    from .models import ScreenerPreset
+
+    preset = ScreenerPreset.objects.filter(id=pk).first()
+    if preset is None:
+        return Response({'detail': '预设不存在'}, status=status.HTTP_404_NOT_FOUND)
+    preset.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)

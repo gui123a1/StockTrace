@@ -21,9 +21,10 @@ _SECTOR_SORT_FIELDS = {
     'leader_pct': 'leader_pct',
 }
 
-# 上游原生多日排行（东财 clist 接口，净额单位为元）；更长区间需日度快照积累
+# 上游原生多日排行（东财 clist 接口，净额单位为元）；20d 由日度快照供数
 _SECTOR_RANK_INDICATORS = {'5d': '5日', '10d': '10日'}
-_SECTOR_PERIODS = ('day', '5d', '10d')
+_SECTOR_PERIODS = ('day', '5d', '10d', '20d')
+_SNAPSHOT_PERIOD_DAYS = {'20d': 20}
 
 
 def _parse_sector_rank_table(df):
@@ -152,7 +153,10 @@ def fetch_industry_fund_flow(period='day', ttl=180):
     return data
 
 
-def _sector_payload(items, board, period='day', q='', sort='net', order='desc', page=1, page_size=50):
+def _sector_payload(
+    items, board, period='day', q='', sort='net', order='desc', page=1, page_size=50,
+    message='',
+):
     if q:
         needle = q.lower()
         items = [item for item in items if needle in item['name'].lower() or needle in (item.get('leader') or '').lower()]
@@ -180,6 +184,7 @@ def _sector_payload(items, board, period='day', q='', sort='net', order='desc', 
         'supported_periods': list(_SECTOR_PERIODS),
         'unavailable_periods': ['1m', '3m', '6m', '1y'],
         'unavailable_reason': '更长区间需要日度快照积累后开放',
+        **({'message': message} if message else {}),
         'summary': {
             'sample_count': len(items),
             'net_total': total_net if items else None,
@@ -204,11 +209,16 @@ def get_sector_rotation(board='industry', period='day', q='', sort='net', order=
     if board not in ('industry', 'concept'):
         raise ValueError('board 必须是 industry 或 concept')
     if period not in _SECTOR_PERIODS:
-        raise ValueError('period 必须是 day、5d 或 10d')
+        raise ValueError('period 必须是 day、5d、10d 或 20d')
     if sort not in _SECTOR_SORT_FIELDS:
         raise ValueError('不支持的板块排序字段')
     if order not in ('asc', 'desc'):
         raise ValueError('order 必须是 asc 或 desc')
+    if period in _SNAPSHOT_PERIOD_DAYS and sort != 'net':
+        raise ValueError(f'{period} 轮动由日度快照供数，仅支持按净额排序')
+
+    if period in _SNAPSHOT_PERIOD_DAYS:
+        return _snapshot_rotation(board, period, q=q, order=order, page=page, page_size=page_size)
 
     if board == 'industry':
         loader = fetch_industry_fund_flow
@@ -229,6 +239,46 @@ def get_sector_rotation(board='industry', period='day', q='', sort='net', order=
             else f'akshare.stock_sector_fund_flow_rank({period})',
             payload['available'],
             disclaimer=payload['methodology'],
+        ),
+        **payload,
+    }
+
+
+def _snapshot_rotation(board, period, q='', order='desc', page=1, page_size=50):
+    """20 日（等）轮动：由日度快照的当日净额累加得到，窗口不齐则如实不可用。"""
+    from . import snapshots
+    from ..models import MarketDailySnapshot
+
+    kind = (MarketDailySnapshot.KIND_INDUSTRY_FF if board == 'industry'
+            else MarketDailySnapshot.KIND_CONCEPT_FF)
+    n = _SNAPSHOT_PERIOD_DAYS[period]
+    nets, covered = snapshots.sector_multiday_nets(kind, n)
+    latest = snapshots._latest_snapshot(kind)
+
+    if nets is None:
+        items, message = [], (
+            f'日度快照积累不足：已覆盖 {covered}/{n} 个交易日（每天收盘后自动积累，'
+            f'缺天不补，凑齐后自动开放）。'
+        )
+    else:
+        items = [
+            {'name': name, 'net': net, 'inflow': None, 'outflow': None,
+             'change_pct': None, 'index_value': None, 'company_count': None,
+             'leader': None, 'leader_pct': None}
+            for name, net in nets.items()
+        ]
+        message = ''
+    payload = _sector_payload(
+        items, board, period=period, q=q, sort='net', order=order,
+        page=page, page_size=page_size, message=message,
+    )
+    return {
+        'updated_at': _now_str(),
+        'meta': snapshots.snapshot_meta(
+            f'MarketDailySnapshot({kind}) n={n}',
+            bool(items),
+            latest=latest,
+            message=message,
         ),
         **payload,
     }

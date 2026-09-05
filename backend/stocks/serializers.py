@@ -5,10 +5,12 @@ from .models import Stock, DailyQuote, MinuteBar
 class StockSerializer(serializers.ModelSerializer):
     class Meta:
         model = Stock
-        fields = ['id', 'code', 'name', 'is_active', 'created_at']
+        fields = ['id', 'code', 'name', 'is_active', 'cost_price', 'quantity', 'created_at']
         read_only_fields = ['id', 'created_at']
         extra_kwargs = {
             'name': {'required': False, 'allow_blank': True},
+            'cost_price': {'required': False, 'allow_null': True},
+            'quantity': {'required': False, 'allow_null': True},
         }
 
 
@@ -42,10 +44,12 @@ class StockSearchSerializer(serializers.Serializer):
 
 
 class DashboardStockSerializer(serializers.Serializer):
-    """Dashboard 聚合数据 - 当日所有关注股票摘要"""
+    """Dashboard 聚合数据 - 当日所有关注股票摘要（含可选持仓成本）"""
     id = serializers.IntegerField()
     code = serializers.CharField()
     name = serializers.CharField(allow_blank=True)
+    cost_price = serializers.DecimalField(max_digits=10, decimal_places=3, allow_null=True)
+    quantity = serializers.IntegerField(allow_null=True)
     trade_date = serializers.DateField(allow_null=True)
     open_price = serializers.DecimalField(max_digits=10, decimal_places=2, allow_null=True)
     close_price = serializers.DecimalField(max_digits=10, decimal_places=2, allow_null=True)

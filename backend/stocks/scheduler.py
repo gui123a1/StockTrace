@@ -3,9 +3,9 @@ APScheduler 集成到 Django
 
 在 Django 启动时自动注册定时任务：
 1. 开盘前 08:50 增量日线（预热，避免手动时补大段）
-2. 盘中每5分钟更新分钟数据
-3. 收盘后 15:10 汇总当日日线+分钟（自选库最后一次自动写入）
-4. 收盘后 15:30–21:00 每30分钟预热晚到行情缓存（交易日）
+2. 盘中每5分钟更新分钟数据（随后评估价格提醒）
+3. 收盘后 15:10 汇总当日日线+分钟（自选库最后一次自动写入；随后评估价格提醒、清理 AI 调用记录）
+4. 收盘后 15:30–21:00 每30分钟预热晚到行情缓存并落日度快照（交易日）
 
 多 worker（Gunicorn）下用文件锁保证仅一个进程持有调度器。
 """
@@ -120,11 +120,39 @@ def _release_lock():
 def _intraday_job():
     from .services import fetch_intraday_update
     fetch_intraday_update()
+    _evaluate_alerts()
 
 
 def _daily_summary_job():
     from .services import fetch_daily_summary
     fetch_daily_summary()
+    _evaluate_alerts()
+    _cleanup_ai_logs()
+
+
+def _evaluate_alerts():
+    """提醒评估跟在数据任务后跑；失败只记日志，不影响主任务结果。"""
+    from .alerts import evaluate_alerts
+    try:
+        evaluate_alerts()
+    except Exception as e:
+        logger.error(f"价格提醒评估失败: {e}")
+
+
+def _cleanup_ai_logs():
+    """AI 调用流水保留 N 天（默认 90），防止 AiCallLog 无限增长。"""
+    from datetime import timedelta
+
+    from .models import AiCallLog
+
+    days = getattr(settings, 'AI_CALL_LOG_RETENTION_DAYS', 90)
+    try:
+        cutoff = timezone.now() - timedelta(days=days)
+        deleted, _ = AiCallLog.objects.filter(created_at__lt=cutoff).delete()
+        if deleted:
+            logger.info(f"清理 {days} 天前的 AI 调用记录 {deleted} 条")
+    except Exception as e:
+        logger.error(f"AI 调用记录清理失败: {e}")
 
 
 def _preopen_incremental_job():

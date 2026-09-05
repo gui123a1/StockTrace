@@ -59,6 +59,9 @@ class Stock(models.Model):
     code = models.CharField('股票代码', max_length=10, unique=True)
     name = models.CharField('股票名称', max_length=50, blank=True, default='')
     is_active = models.BooleanField('是否监控中', default=True)
+    # 可选持仓成本：填了才参与看板盈亏统计（None 表示纯观察，不算钱）
+    cost_price = models.DecimalField('成本价', max_digits=10, decimal_places=3, null=True, blank=True)
+    quantity = models.IntegerField('持股数(股)', null=True, blank=True)
     created_at = models.DateTimeField('创建时间', auto_now_add=True)
 
     class Meta:
@@ -68,6 +71,105 @@ class Stock(models.Model):
 
     def __str__(self):
         return f"{self.code} {self.name}"
+
+
+class MarketDailySnapshot(models.Model):
+    """市场日度快照：收盘后把当日关键横截面落库一行，用于多日趋势指标。
+
+    数据诚信：只存上游当日真实返回；某天上游不可用就没有该行，
+    多日指标按「窗口内快照齐全才算数」计算，绝不拿 0 或旧值补天。
+    """
+    KIND_INDUSTRY_FF = 'industry_ff'
+    KIND_CONCEPT_FF = 'concept_ff'
+    KIND_ETF_SHARE = 'etf_share'
+    KIND_CHOICES = [
+        (KIND_INDUSTRY_FF, '行业资金流'),
+        (KIND_CONCEPT_FF, '概念资金流'),
+        (KIND_ETF_SHARE, 'ETF份额'),
+    ]
+
+    kind = models.CharField('快照类型', max_length=30, choices=KIND_CHOICES)
+    trade_date = models.DateField('交易日期')
+    payload = models.JSONField('快照数据')
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+
+    class Meta:
+        verbose_name = '市场日度快照'
+        verbose_name_plural = '市场日度快照'
+        unique_together = ['kind', 'trade_date']
+        ordering = ['-trade_date']
+
+    def __str__(self):
+        return f"{self.kind} {self.trade_date}"
+
+
+class PriceAlert(models.Model):
+    """自选股价格提醒规则（收盘汇总与盘中任务顺带评估，无独立轮询）"""
+    PRICE_ABOVE = 'price_above'
+    PRICE_BELOW = 'price_below'
+    DAILY_PCT_ABOVE = 'daily_pct_above'
+    DAILY_PCT_BELOW = 'daily_pct_below'
+    RULE_CHOICES = [
+        (PRICE_ABOVE, '价格上穿'),
+        (PRICE_BELOW, '价格下穿'),
+        (DAILY_PCT_ABOVE, '日涨幅达到'),
+        (DAILY_PCT_BELOW, '日跌幅达到'),
+    ]
+
+    stock = models.ForeignKey(
+        Stock, on_delete=models.CASCADE, related_name='alerts', verbose_name='股票'
+    )
+    rule_type = models.CharField('规则类型', max_length=30, choices=RULE_CHOICES)
+    threshold = models.DecimalField('阈值', max_digits=12, decimal_places=4)
+    note = models.CharField('备注', max_length=100, blank=True, default='')
+    is_active = models.BooleanField('启用', default=True)
+    last_triggered_at = models.DateTimeField('最近触发时间', null=True, blank=True)
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+
+    class Meta:
+        verbose_name = '价格提醒'
+        verbose_name_plural = '价格提醒'
+        ordering = ['stock__code', 'id']
+
+    def __str__(self):
+        return f"{self.stock.code} {self.get_rule_type_display()} {self.threshold}"
+
+
+class AlertEvent(models.Model):
+    """提醒触发记录；同一规则同一交易日只触发一次（trade_date 去重）"""
+    alert = models.ForeignKey(
+        PriceAlert, on_delete=models.CASCADE, related_name='events', verbose_name='提醒规则'
+    )
+    stock = models.ForeignKey(
+        Stock, on_delete=models.SET_NULL, null=True, verbose_name='股票'
+    )
+    message = models.CharField('提醒内容', max_length=200)
+    trade_date = models.DateField('触发交易日')
+    is_read = models.BooleanField('已读', default=False)
+    created_at = models.DateTimeField('触发时间', auto_now_add=True)
+
+    class Meta:
+        verbose_name = '提醒记录'
+        verbose_name_plural = '提醒记录'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.message} ({self.trade_date})"
+
+
+class ScreenerPreset(models.Model):
+    """条件选股预设：保存结构化条件 spec，供一键重跑（单用户系统，无归属字段）"""
+    name = models.CharField('预设名称', max_length=50, unique=True)
+    spec = models.JSONField('筛选条件')
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+
+    class Meta:
+        verbose_name = '选股预设'
+        verbose_name_plural = '选股预设'
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
 
 
 class DailyQuote(models.Model):

@@ -112,4 +112,12 @@ def warm_post_close_lagging():
     except Exception as e:
         logger.error(f"预热 ETF 份额/雷达失败: {e}")
 
+    # 上面已把当日板块/ETF 数据拉热，顺手落日度快照（幂等，重跑覆盖）
+    try:
+        from . import snapshots
+        saved = snapshots.save_daily_snapshots()
+        logger.info(f"日度快照落库: {saved}")
+    except Exception as e:
+        logger.error(f"日度快照落库失败: {e}")
+
     logger.info(f"收盘后晚到数据预热结束，耗时 {time.time() - started:.1f}s")

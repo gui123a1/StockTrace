@@ -9,6 +9,7 @@ import akshare as ak
 from ._cache import _cache_get, _cache_meta, _cache_set, _now_str, _stale_or, _to_float
 from ._query import _paginate, _sort_items
 from ._sources import _safe_df_call
+from . import snapshots
 
 # 国家队 / 汇金 常相关的宽基与政策向 ETF（6 位代码）
 NATIONAL_TEAM_ETFS = [
@@ -171,6 +172,14 @@ def get_etf_share_radar(
     sort_order = order or default_order
     sorted_items = _sort_items(scoped_items, _ETF_SORT_FIELDS[sort_field], sort_order)
     page_items, pagination = _paginate(sorted_items, page, page_size)
+
+    # 份额 n 日变化：由日度快照计算，窗口不齐的档位如实为 null
+    share_chg_maps = {n: snapshots.share_change_map(n)[0] for n in (1, 5, 20)}
+    for item in page_items:
+        for n in (1, 5, 20):
+            chg_map = share_chg_maps[n]
+            item[f'share_chg_{n}d'] = chg_map.get(item['code']) if chg_map else None
+
     total_main = sum(item['main_net'] for item in scoped_items if item.get('main_net') is not None)
     total_turnover = sum(item['turnover'] for item in scoped_items if item.get('turnover') is not None)
     data_dates = [item['data_date'] for item in scoped_items if item.get('data_date')]
@@ -206,10 +215,13 @@ def get_etf_share_radar(
         'pagination': pagination,
         'items': page_items,
         'supported_metrics': {
-            'share_change_1d': False,
-            'share_change_5d': False,
-            'share_change_20d': False,
-            'reason': '一期未保存 ETF 日度份额快照',
+            'share_change_1d': share_chg_maps[1] is not None,
+            'share_change_5d': share_chg_maps[5] is not None,
+            'share_change_20d': share_chg_maps[20] is not None,
+            'reason': (
+                '份额变化由收盘后日度快照计算；档位窗口内缺任一交易日即暂为 null，'
+                '快照积累齐全后自动开放。'
+            ),
         },
         'message': '' if all_items else 'ETF 行情暂不可用',
     }
@@ -269,6 +281,14 @@ def get_etf_detail(code, range_name='3m'):
     quote = next((item for item in _normalized_etf_items() if item['code'] == code), None)
     if quote is None:
         raise ValueError('未在 ETF 行情中找到该代码')
+    chg_maps = {n: snapshots.share_change_map(n)[0] for n in (1, 5, 20)}
+    has_chg = any(m is not None for m in chg_maps.values())
+    if has_chg:
+        chg_payload = {f'share_chg_{n}d': (m or {}).get(code) for n, m in chg_maps.items()}
+        share_message = '份额变化由日度快照计算；窗口未凑齐的档位为 null。'
+    else:
+        chg_payload = {f'share_chg_{n}d': None for n in (1, 5, 20)}
+        share_message = '尚未积累日度份额快照，暂不提供 1/5/20 日份额变化。'
     history = _etf_history(code, range_name=range_name)
     history_key = f'etf_history_{code}_{range_name}'
     history_dates = [item['date'] for item in history if item.get('date')]
@@ -290,8 +310,9 @@ def get_etf_detail(code, range_name='3m'):
         },
         'share_metrics': {
             'latest_share': quote.get('share'),
-            'availability': 'latest_only',
-            'message': '一期未积累日度份额快照，暂不提供 1/5/20 日份额变化。',
+            **chg_payload,
+            'availability': 'daily_snapshot' if has_chg else 'latest_only',
+            'message': share_message,
         },
         'history': {
             'range': range_name,

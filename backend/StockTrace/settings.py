@@ -51,6 +51,11 @@ socket.setdefaulttimeout(int(os.environ.get('STOCKTRACE_UPSTREAM_TIMEOUT', '30')
 STOCKTRACE_LLM_TIMEOUT = int(os.environ.get('STOCKTRACE_LLM_TIMEOUT', '60'))
 STOCKTRACE_AI_DAILY_LIMIT = int(os.environ.get('STOCKTRACE_AI_DAILY_LIMIT', '100'))
 
+# 价格提醒可选外发推送（Server酱兼容：POST {title, desp}）；留空则只记本地
+STOCKTRACE_PUSH_URL = os.environ.get('STOCKTRACE_PUSH_URL', '')
+# AI 调用流水保留天数（scheduler 收盘清理 AiCallLog 用）
+AI_CALL_LOG_RETENTION_DAYS = int(os.environ.get('AI_CALL_LOG_RETENTION_DAYS', '90'))
+
 
 # Application definition
 
