@@ -1,24 +1,96 @@
 <script setup>
+import { ref } from 'vue'
 import { RouterView } from 'vue-router'
 import NavBar from './components/NavBar.vue'
+import SiteDisclaimer from './components/SiteDisclaimer.vue'
+
+// 首次访问自动弹出；页脚「免责声明」可随时重开
+const disclaimerRef = ref(null)
+
+function openDisclaimer() {
+  disclaimerRef.value?.open()
+}
 </script>
 
 <template>
-  <NavBar />
-  <main class="main-content">
-    <!-- include 按路由 name 缓存页面组件：切走不销毁，回来免白屏重拉 -->
-    <RouterView v-slot="{ Component }">
-      <KeepAlive :include="['Market', 'MarketTrend', 'MarketSectors', 'MarketInstitutions', 'MarketNationalEtf', 'MarketEtfRadar']">
-        <component :is="Component" />
-      </KeepAlive>
-    </RouterView>
-  </main>
+  <div class="app-shell">
+    <NavBar />
+    <main class="main-content">
+      <!-- include 按路由 name 缓存页面组件：切走不销毁，回来免白屏重拉 -->
+      <RouterView v-slot="{ Component }">
+        <KeepAlive :include="['Market', 'MarketTrend', 'MarketSectors', 'MarketInstitutions', 'MarketNationalEtf', 'MarketEtfRadar']">
+          <component :is="Component" />
+        </KeepAlive>
+      </RouterView>
+    </main>
+    <footer class="site-footer">
+      <span>StockTrace · 个人自用监控面板</span>
+      <span class="divider">|</span>
+      <span>数据来自公开第三方接口，可能延迟或有错漏；AI 内容自动生成，均不构成投资建议</span>
+      <a href="#" class="footer-link" @click.prevent="openDisclaimer">免责声明</a>
+    </footer>
+    <SiteDisclaimer ref="disclaimerRef" />
+  </div>
 </template>
 
 <style scoped>
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
 .main-content {
+  flex: 1;
   max-width: 1400px;
+  width: 100%;
+  box-sizing: border-box;
   margin: 0 auto;
   padding: 20px;
+}
+
+.site-footer {
+  max-width: 1400px;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 auto;
+  padding: 14px 20px 18px;
+  border-top: 1px solid #1e2a44;
+  color: #66738c;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.divider {
+  color: #2a3a5e;
+}
+
+.footer-link {
+  color: #7ea6d9;
+  text-decoration: none;
+  margin-left: auto;
+}
+
+.footer-link:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 600px) {
+  .site-footer {
+    flex-direction: column;
+    gap: 4px;
+    text-align: center;
+  }
+
+  .divider {
+    display: none;
+  }
+
+  .footer-link {
+    margin-left: 0;
+  }
 }
 </style>
