@@ -21,6 +21,8 @@
 3. **已知环境问题（非代码）**：本机代理（Clash 7890）对 `push2his.eastmoney.com` 的 TLS 干扰已从「间歇性」加重到「基本不可用」（https/http 均被断连，绕过代理直连同样被干扰）——本地开发时大盘资金流、国家队 ETF 资金流、板块 5d/10d、ETF 价格历史这几类端点会如实报「暂不可用」，点重试偶发收敛；逻辑正确性由单测锁定（parse/聚合/取窗/缓存）。VPS 国内线路不受影响。8000 端口被用户另一 uvicorn 服务占用，本地后端约定用 8001。
 4. ~~HTTPS 回源 + 限流的 VPS 收尾~~ ✅ 已完成（2026-09-05）：Origin 证书装好、conf 替换、CF 已切 Full (strict)，外测 401 + 日志确认 HTTP/2 回源与真实 IP 限流生效。可选后续：防火墙 443 只放行 CF 网段。
 5. 小项：前端主包 gzip ~60 kB 可再分割；`handoff_cn.md`/`handoff.md` 为 v1.01 时代文档，仅考古。
+5. 小项：前端主包 gzip ~60 kB 可再分割；`handoff_cn.md`/`handoff.md` 为 v1.01 时代文档，仅考古。
+7. **东财 push2his 上游持续不可用（2026-09-05 起，VPS 亦然）**：大盘主力资金流历史/板块历史/ETF 东财历史均受影响。已有缓解：大盘资金流已纳入日度快照（market_ff，收盘自动积累 + 窗口快照兜底），上游恢复后跑一次 `backfill_market_snapshots --days 130` 即回补 130 日历史；ETF 历史已切新浪备源。页面在上游不可用期间如实显示降级提示，不伪造数据。
 6. **2026-09-05 功能包待部署验证**：快照积累（上条）、价格提醒（`PriceAlert`/`AlertEvent` + 盘中/收盘评估 + 可选 `STOCKTRACE_PUSH_URL` 推送）、持仓成本盈亏（Stock.cost_price/quantity + 看板统计）、选股预设（`/api/screener/presets/`）、AiCallLog 90 天清理。后端 101 测试过；**已部署 VPS 并重启验证**（2026-09-05，当日快照已落库：行业 90/概念 387/ETF 1601）。**行业 60 日回填未完成**：东财 push2 clist 接口当时持续 502，上游恢复后在 VPS 重跑 `nohup python manage.py backfill_market_snapshots --days 60 > /tmp/backfill.log 2>&1 &` 即可；概念/ETF 份额无上游历史，只能向前积累（约 1 个月凑齐首个 20 日窗口）。
 
 ## 2026-09-04 数据准确性核对（全页面实拉交叉核对）
