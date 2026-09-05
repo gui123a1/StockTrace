@@ -79,6 +79,7 @@ def screener_schema_text():
         '可选字段：\n' + field_lines +
         '\n操作符：gt(大于) gte(大于等于) lt(小于) lte(小于等于) eq(等于) '
         'between(value 为 [下限, 上限])'
+        '\n布尔字段（说明为「1是/0否」的字段）用 eq 1 表示成立、eq 0 表示不成立'
     )
 
 

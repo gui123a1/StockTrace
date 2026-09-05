@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { aiApi, presetApi, stockApi } from '../api/stocks.js'
 import { formatPct, formatNum, pctClass } from '../utils/format.js'
@@ -17,7 +17,29 @@ const FIELDS = [
   { key: 'low_price', label: '最低价(元)' },
   { key: 'volume', label: '成交量(手)' },
   { key: 'turnover', label: '成交额(元)' },
+  { key: 'pct_5d', label: '5日涨跌幅(%)' },
+  { key: 'pct_10d', label: '10日涨跌幅(%)' },
+  { key: 'pct_20d', label: '20日涨跌幅(%)' },
+  { key: 'pct_60d', label: '60日涨跌幅(%)' },
+  { key: 'volume_ratio', label: '量比(今量/5日均量)' },
+  { key: 'turnover_5d_avg', label: '5日日均成交额(元)' },
+  { key: 'pct_from_high_20d', label: '距20日最高回撤(%)' },
+  { key: 'up_days', label: '连续上涨天数' },
+  { key: 'above_ma5', label: '站上5日线' },
+  { key: 'above_ma10', label: '站上10日线' },
+  { key: 'above_ma20', label: '站上20日线' },
+  { key: 'above_ma60', label: '站上60日线' },
+  { key: 'ma5_gt_ma10', label: '5日线>10日线' },
+  { key: 'ma5_gt_ma20', label: '5日线>20日线' },
+  { key: 'new_high_20d', label: '创20日新高' },
+  { key: 'new_low_20d', label: '创20日新低' },
 ]
+// 布尔字段：值只能是 1（是）/ 0（否），与后端 BOOL_FIELDS 保持一致
+const BOOL_FIELDS = new Set([
+  'above_ma5', 'above_ma10', 'above_ma20', 'above_ma60',
+  'ma5_gt_ma10', 'ma5_gt_ma20',
+  'new_high_20d', 'new_low_20d',
+])
 const OPS = [
   { key: 'gt', label: '>' },
   { key: 'gte', label: '>=' },
@@ -28,7 +50,7 @@ const OPS = [
 ]
 const ORDER_OPTIONS = [
   { key: '', label: '默认' },
-  ...FIELDS.map(f => ({ key: f.key, label: f.label })),
+  ...FIELDS.filter(f => !BOOL_FIELDS.has(f.key)).map(f => ({ key: f.key, label: f.label })),
 ]
 
 // 自然语言选股
@@ -51,6 +73,32 @@ const notice = ref('')
 const comment = ref('')
 const commentLoading = ref(false)
 
+// 结果表动态附加列：条件与排序里用到、且固定列没展示的指标
+const FIXED_COLS = new Set(['change_pct', 'close_price', 'high_low_pct', 'turnover'])
+const extraColumns = computed(() => {
+  const spec = appliedConditions.value
+  if (!spec) return []
+  const keys = []
+  for (const c of spec.conditions || []) {
+    if (!FIXED_COLS.has(c.field) && !keys.includes(c.field)) keys.push(c.field)
+  }
+  if (spec.order_by && !FIXED_COLS.has(spec.order_by) && !keys.includes(spec.order_by)) {
+    keys.push(spec.order_by)
+  }
+  return keys.map(k => ({
+    key: k,
+    label: (FIELDS.find(f => f.key === k) || {}).label || k,
+    bool: BOOL_FIELDS.has(k),
+  }))
+})
+
+function fmtCell(row, col) {
+  const v = row[col.key]
+  if (v == null) return '-'
+  if (col.bool) return v === 1 ? '是' : '否'
+  return formatNum(v)
+}
+
 function errText(e) {
   const data = e.response?.data
   if (typeof data === 'string') return data
@@ -63,6 +111,13 @@ function addCondition() {
 }
 function removeCondition(i) {
   conditions.value.splice(i, 1)
+}
+
+function onFieldChange(c) {
+  if (BOOL_FIELDS.has(c.field)) {
+    c.op = 'eq'
+    c.value = '1'
+  }
 }
 
 function buildSpec() {
@@ -263,13 +318,18 @@ function fmtTurnover(v) {
       <h2>手动条件</h2>
       <div class="conds">
         <div v-for="(c, i) in conditions" :key="i" class="cond-row">
-          <select v-model="c.field">
+          <select v-model="c.field" @change="onFieldChange(c)">
             <option v-for="f in FIELDS" :key="f.key" :value="f.key">{{ f.label }}</option>
           </select>
-          <select v-model="c.op" class="op">
+          <select v-if="!BOOL_FIELDS.has(c.field)" v-model="c.op" class="op">
             <option v-for="o in OPS" :key="o.key" :value="o.key">{{ o.label }}</option>
           </select>
-          <input v-model="c.value" type="number" class="val" placeholder="值" />
+          <span v-else class="op">=</span>
+          <select v-if="BOOL_FIELDS.has(c.field)" v-model="c.value" class="val">
+            <option value="1">是</option>
+            <option value="0">否</option>
+          </select>
+          <input v-else v-model="c.value" type="number" class="val" placeholder="值" />
           <template v-if="c.op === 'between'">
             <span>~</span>
             <input v-model="c.value2" type="number" class="val" placeholder="上限" />
@@ -324,6 +384,7 @@ function fmtTurnover(v) {
             <th>涨跌幅</th>
             <th>收盘价</th>
             <th>振幅</th>
+            <th v-for="col in extraColumns" :key="col.key">{{ col.label }}</th>
             <th>成交额</th>
             <th>数据日期</th>
             <th>操作</th>
@@ -336,6 +397,7 @@ function fmtTurnover(v) {
             <td :class="pctClass(r.change_pct)">{{ formatPct(r.change_pct) }}</td>
             <td>{{ formatNum(r.close_price) }}</td>
             <td>{{ formatPct(r.high_low_pct) }}</td>
+            <td v-for="col in extraColumns" :key="col.key" :class="pctClass(col.bool ? null : r[col.key])">{{ fmtCell(r, col) }}</td>
             <td>{{ fmtTurnover(r.turnover) }}</td>
             <td>{{ r.trade_date }}</td>
             <td class="actions">

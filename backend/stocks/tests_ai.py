@@ -264,3 +264,87 @@ class AiEndpointTests(TestCase):
             'query': 'x', 'results': [],
         }, content_type='application/json')
         self.assertEqual(response.status_code, 400)
+
+
+def _make_bars(stock, closes, volumes=None, start=date(2026, 6, 1)):
+    """按收盘价序列（升序交易日）造日线；open/high/low 与收盘相同。"""
+    for i, close in enumerate(closes):
+        vol = volumes[i] if volumes else 100000
+        DailyQuote.objects.create(
+            stock=stock, trade_date=start + timedelta(days=i),
+            open_price=Decimal(str(close)), close_price=Decimal(str(close)),
+            high_price=Decimal(str(close)), low_price=Decimal(str(close)),
+            open_close_diff=Decimal('0'), open_close_pct=Decimal('0'),
+            high_low_diff=Decimal('0'), high_low_pct=Decimal('0'),
+            volume=vol, turnover=Decimal('1000000'),
+        )
+
+
+class ScreenerDerivedFieldsTests(TestCase):
+    """多日衍生字段：区间涨跌/均线/量比/新高新低/连涨天数。"""
+
+    def setUp(self):
+        self.stock = Stock.objects.create(code='600001', name='衍生测试')
+
+    def test_pct_5d(self):
+        _make_bars(self.stock, [10.0, 10.0, 10.0, 10.0, 10.0, 11.0])
+        rows = run_screener({'logic': 'all', 'conditions': [
+            {'field': 'pct_5d', 'op': 'gte', 'value': 9},
+        ]})
+        self.assertEqual([r['code'] for r in rows], ['600001'])
+
+    def test_above_ma20_needs_full_window(self):
+        # 20 根：19 根 10 元 + 最新 11 元 → MA20=10.05，收盘 11 ≥ MA20
+        _make_bars(self.stock, [10.0] * 19 + [11.0])
+        rows = run_screener({'logic': 'all', 'conditions': [
+            {'field': 'above_ma20', 'op': 'eq', 'value': 1},
+        ]})
+        self.assertEqual([r['code'] for r in rows], ['600001'])
+
+    def test_insufficient_history_is_unknown_not_zero(self):
+        # 只有 3 根日线：above_ma20 无值（None），eq 0 也不得命中（未知≠不成立）
+        _make_bars(self.stock, [10.0, 10.0, 11.0])
+        rows = run_screener({'logic': 'all', 'conditions': [
+            {'field': 'above_ma20', 'op': 'eq', 'value': 0},
+        ]})
+        self.assertEqual(rows, [])
+
+    def test_volume_ratio(self):
+        _make_bars(self.stock, [10.0] * 5 + [11.0],
+                   volumes=[100, 100, 100, 100, 100, 300])
+        rows = run_screener({'logic': 'all', 'conditions': [
+            {'field': 'volume_ratio', 'op': 'gt', 'value': 2},
+        ]})
+        self.assertEqual([r['code'] for r in rows], ['600001'])
+
+    def test_ma5_gt_ma20(self):
+        closes = [10.0] * 15 + [10.0, 10.5, 11.0, 11.5, 12.0]
+        _make_bars(self.stock, closes)
+        rows = run_screener({'logic': 'all', 'conditions': [
+            {'field': 'ma5_gt_ma20', 'op': 'eq', 'value': 1},
+        ]})
+        self.assertEqual([r['code'] for r in rows], ['600001'])
+
+    def test_new_high_and_up_days(self):
+        # 单调上行 5 根：创5日(20日窗口不足 → 用 new_high_20d 需 20 根，此处单独测 up_days)
+        _make_bars(self.stock, [10.0, 10.5, 11.0, 11.5, 12.0])
+        rows = run_screener({'logic': 'all', 'conditions': [
+            {'field': 'up_days', 'op': 'eq', 'value': 4},
+        ]})
+        self.assertEqual([r['code'] for r in rows], ['600001'])
+
+    def test_new_high_20d_false_when_below_peak(self):
+        closes = [10.0 + i * 0.1 for i in range(20)]  # 递增到 11.9
+        closes[-1] = 11.0  # 最新收盘低于前高
+        _make_bars(self.stock, closes)
+        rows = run_screener({'logic': 'all', 'conditions': [
+            {'field': 'new_high_20d', 'op': 'eq', 'value': 1},
+        ]})
+        self.assertEqual(rows, [])
+
+    def test_bool_field_rejects_non_binary_value(self):
+        _make_bars(self.stock, [10.0] * 21)
+        with self.assertRaises(ConditionError):
+            run_screener({'logic': 'all', 'conditions': [
+                {'field': 'above_ma20', 'op': 'gt', 'value': 0.5},
+            ]})
