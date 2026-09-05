@@ -28,7 +28,11 @@ def check_throttle(purpose, stock=None):
         if recent:
             return False, f'同一股票 {STOCK_COOLDOWN_SECONDS} 秒内已分析过，请稍后再试'
 
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    # 按本地时区（Asia/Shanghai）零点算"今天"；直接 replace UTC 时间会导致
+    # 上限在北京时间早上 8 点才重置
+    today_start = timezone.localtime(now).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
     daily_count = AiCallLog.objects.filter(created_at__gte=today_start).count()
     if daily_count >= DAILY_LIMIT:
         return False, f'已达今日 AI 调用上限（{DAILY_LIMIT} 次），请明日再试'
