@@ -128,6 +128,7 @@ def _daily_summary_job():
     fetch_daily_summary()
     _evaluate_alerts()
     _cleanup_ai_logs()
+    _cleanup_market_snapshots()
 
 
 def _evaluate_alerts():
@@ -153,6 +154,22 @@ def _cleanup_ai_logs():
             logger.info(f"清理 {days} 天前的 AI 调用记录 {deleted} 条")
     except Exception as e:
         logger.error(f"AI 调用记录清理失败: {e}")
+
+
+def _cleanup_market_snapshots():
+    """市场日度快照保留 N 天（默认 600，覆盖 1y 区间所需约 525 自然日），防 SQLite 无限膨胀。"""
+    from datetime import timedelta
+
+    from .models import MarketDailySnapshot
+
+    days = getattr(settings, 'MARKET_SNAPSHOT_RETENTION_DAYS', 600)
+    try:
+        cutoff = timezone.localdate() - timedelta(days=days)
+        deleted, _ = MarketDailySnapshot.objects.filter(trade_date__lt=cutoff).delete()
+        if deleted:
+            logger.info(f"清理 {days} 天前的市场日度快照 {deleted} 行")
+    except Exception as e:
+        logger.error(f"市场日度快照清理失败: {e}")
 
 
 def _preopen_incremental_job():
