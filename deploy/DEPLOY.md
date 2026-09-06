@@ -117,6 +117,9 @@ cp /opt/stocktrace/backend/db.sqlite3 /opt/stocktrace/backend/db.sqlite3.bak.$(d
 cd /opt/stocktrace
 source backend/venv/bin/activate
 pip install -r backend/requirements.txt
+# ⚠️ akshare 版本已在 requirements.txt 钉死（==1.18.64）：其接口频繁变动，
+#    同花顺板块资金流解析由 stocks/market/sectors.py 自实现——勿随手
+#    pip install -U akshare（2026-09 曾因静默升级破坏解析导致快照断供）。
 cd backend
 set -a; source /etc/stocktrace/env; set +a   # 手动 manage.py 必须加载环境变量
 python manage.py test stocks

@@ -43,7 +43,7 @@ npm run lint && npm run build   # eslint（vue essential 档）+ 产物到 dist/
 | 模型 | `backend/stocks/models.py`（Stock / DailyQuote / MinuteBar） |
 | 自选行情抓取（多源降级） | `backend/stocks/services.py`（EastMoney→Sina→BaoStock→Tencent） |
 | 后台拉取线程 | `backend/stocks/tasks.py`（异步 + fetch-status 轮询） |
-| 行情中心 | `backend/stocks/market/` 包：`_cache`（TTL+交易日历保鲜）/`_sources`（冷却+failover）/`_query`/`periods`（**统一区间解析**）+ `indices`/`flows`/`sectors`/`etf`/`etf_flow`/`institutions`/`overview` |
+| 行情中心 | `backend/stocks/market/` 包：`_cache`（TTL+交易日历保鲜）/`_sources`（冷却+failover）/`_query`/`periods`（**统一区间解析**）+ `indices`/`flows`/`sectors`/`etf`/`etf_flow`/`institutions`/`sentiment`（涨停池情绪/两融余额）/`snapshots`（日度快照）/`overview` |
 | 调度器 | `backend/stocks/scheduler.py`（APScheduler + 文件锁单实例） |
 | REST + 页面 | `backend/stocks/views.py` `urls.py`；前端 `frontend/src/views/` `components/` |
 | 前端 API 封装 | `frontend/src/api/stocks.js`（axios baseURL `/api`） |
@@ -55,9 +55,9 @@ npm run lint && npm run build   # eslint（vue essential 档）+ 产物到 dist/
 | 端点 | 区间能力 | 数据深度/边界 |
 |---|---|---|
 | `market/trend/` | period（交易日 5/22/66/130/260）+ 旧 `days=` + 自定义≤3年 | 新浪日线，深度足够 |
-| `market/sectors/?board=&period=` | `day/5d/10d`（东财排行原生，**无 3d**） | 当日横截面与多日排行 |
-| `market/national-etf/flow/?period=` 或 start/end | `1d/3d/5d` 按交易日 + `1w~6m/ytd` 自然日 + 自定义 | **上游仅约 120 个交易日**，超出标 `coverage_start`+`truncated` |
-| `market/market-flow/` | 全档 + 自定义 | 同上（secid 1.000001 大盘） |
+| `market/sectors/?board=&period=` | `day/5d/10d/20d`（**无 3d**） | 当日=同花顺自实现抓取（东财板块路径对境外 502）；5d/10d 快照优先、东财原生排行兜底；20d 仅快照供数 |
+| `market/national-etf/flow/?period=` 或 start/end | `1d/3d/5d` 按交易日 + `1w~6m/ytd` 自然日 + 自定义 | push2his 约 120 交易日（境外被掐时 push2delay 兜底仅当日一根），超出标 `coverage_start`+`truncated` |
+| `market/market-flow/` | 全档 + 自定义 | 同上（secid 1.000001 大盘；另有日度快照兜底） |
 | `market/northbound/` | 全档 + 自定义 | 北向净买额历史切片 |
 | `market/etfs/<code>/?range=` | `1w/1m/3m/6m/1y` | 价格历史，历史源失败保留现价快照 |
 | `market/institutions/?quarter=` | 季度（`2026Q1`） | 季报，披露滞后 |
@@ -72,7 +72,7 @@ npm run lint && npm run build   # eslint（vue essential 档）+ 产物到 dist/
 3. **1H2G 红线**：Gunicorn 1 worker 2 线程；不要加 worker；自选 ≤ ~20 只；前端 60s 轮询。
 4. **发版 = git 标签**：验证通过后 `git tag -a vX.Y.Z`（SemVer，当前 v1.2.1）+ `git push --follow-tags`；不再维护目录快照。
 5. **密钥绝不入库**：`.env`、`地址.md`、db、scheduler.lock 已 gitignore；推送前扫描。
-6. **本地环境坑**：本机代理对 `push2his.eastmoney.com` 的 TLS 间歇性干扰——资金流抓取已内置 https 退避重试 + http 兜底（故意不走 akshare 的同源封装）；8000 端口被用户其他服务占用，后端用 8001。
+6. **本地环境坑**：本机代理对 `push2his.eastmoney.com` 的 TLS 间歇性干扰——资金流抓取已内置 https 退避重试 + http 兜底（故意不走 akshare 的同源封装）；2026-09-07 诊断确认 VPS（境外）对该域名同样整体不可达，fflow 已加 push2delay 镜像兜底（仅当日一根）。akshare 版本已在 requirements.txt 钉死，勿随手升级；8000 端口被用户其他服务占用，后端用 8001。
 7. **选源原则：交易所官方优先**：披露类数据（ETF 份额、两融、收盘行情口径等）交易所官方接口可用时优先于商业聚合源（东财/乐咕），聚合源兜底；衍生类数据（主力资金流、涨停池、概念归类、估值分位）交易所无对应披露，只能用商业源。两源同用时如实标注口径与披露时点（如两融 T+1、深市晚于沪市），不混用不同日期的数据硬凑合计。
 
 ## 提交规范
@@ -82,6 +82,6 @@ Conventional Commits 中文（`feat:`/`fix:`/`docs:`/`chore:`/`refactor:`/`perf:
 ## 验证清单（任何后端改动）
 
 ```bash
-cd backend  && python -m ruff check . && python manage.py test stocks   # 39+ 测试
+cd backend  && python -m ruff check . && python manage.py test stocks   # 全部测试
 cd frontend && npm run lint && npm run build
 ```
