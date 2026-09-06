@@ -18,11 +18,20 @@ const error = ref('')
 const data = ref(null)
 const range = ref('3m')
 
-const RANGE_OPTIONS = [['1w', '1周'], ['1m', '1月'], ['3m', '3月'], ['6m', '半年'], ['1y', '1年']]
+const RANGE_OPTIONS = [['1w', '1周'], ['1m', '1月'], ['3m', '3月'], ['6m', '半年'], ['1y', '1年'], ['custom', '自定义']]
+const _today = new Date()
+const _ago = days => {
+  const d = new Date(_today)
+  d.setDate(d.getDate() - days)
+  return d.toISOString().slice(0, 10)
+}
+const customStart = ref(_ago(30))
+const customEnd = ref(_today.toISOString().slice(0, 10))
 
 const quote = computed(() => data.value?.quote || {})
 const performance = computed(() => data.value?.price_performance || {})
 const history = computed(() => data.value?.history?.items || [])
+const stats = computed(() => data.value?.history?.stats || null)
 const chartOption = computed(() => {
   if (!history.value.length) return {}
   return {
@@ -50,7 +59,13 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const res = await marketApi.getEtfDetail(props.code, { range: range.value })
+    const params = { range: range.value }
+    if (range.value === 'custom') {
+      if (!customStart.value || !customEnd.value) { loading.value = false; return }
+      params.start_date = customStart.value
+      params.end_date = customEnd.value
+    }
+    const res = await marketApi.getEtfDetail(props.code, params)
     data.value = res.data
   } catch (e) {
     error.value = e.response?.data?.detail || 'ETF 详情加载失败'
@@ -83,10 +98,23 @@ watch(range, load)
       <div class="range-tabs">
         <button v-for="r in RANGE_OPTIONS" :key="r[0]" :class="{ active: range === r[0] }" @click="range = r[0]">{{ r[1] }}</button>
       </div>
+      <div v-if="range === 'custom'" class="custom-range">
+        <input v-model="customStart" type="date" :max="customEnd" />
+        <span>至</span>
+        <input v-model="customEnd" type="date" :min="customStart" :max="customEnd" />
+        <button class="apply" :disabled="!customStart || !customEnd || loading" @click="load">查询</button>
+      </div>
       <v-chart v-if="history.length && chartOption.series" :option="chartOption" autoresize class="chart" />
       <div v-else class="history-empty">
         <b>价格历史暂不可用</b>
         <p>当前行情仍可查看；历史数据源恢复后可重新刷新。</p>
+      </div>
+      <div v-if="stats" class="win-stats">
+        <div><span>区间涨跌</span><b :class="pctClass(stats.change_pct)">{{ formatPct(stats.change_pct) }}</b></div>
+        <div><span>区间最高</span><b>{{ formatNum(stats.high) }}</b></div>
+        <div><span>区间最低</span><b>{{ formatNum(stats.low) }}</b></div>
+        <div><span>日均成交额</span><b>{{ formatAmount(stats.avg_turnover) }}</b></div>
+        <div><span>交易日</span><b>{{ stats.count }}</b></div>
       </div>
       <div class="returns">
         <div><span>5日</span><b :class="pctClass(performance.return_5d)">{{ formatPct(performance.return_5d) }}</b></div>
@@ -118,6 +146,14 @@ h2 { margin: 0; font-size: 18px; } header span { color: #71809a; font-size: 12px
 .metrics { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 12px 0; }
 .metrics div { background: #0c172a; border-radius: 7px; padding: 9px; }.metrics label { display: block; color: #68758d; font-size: 11px; }.metrics b { display: block; margin-top: 4px; font-size: 13px; }
 .range-tabs { display: flex; gap: 5px; }.range-tabs button { border: 1px solid #273a5c; background: #101a2c; color: #71809a; border-radius: 5px; padding: 4px 9px; cursor: pointer; }.range-tabs button.active { background: #174673; color: #fff; }
+.custom-range { display: flex; align-items: center; gap: 6px; margin-top: 7px; color: #71809a; font-size: 12px; }
+.custom-range input { background: #0c172a; border: 1px solid #273a5c; color: #dce4f2; border-radius: 5px; padding: 3px 6px; color-scheme: dark; font-size: 12px; }
+.custom-range .apply { border: 1px solid #273a5c; background: #174673; color: #fff; border-radius: 5px; padding: 4px 10px; cursor: pointer; }
+.custom-range .apply:disabled { opacity: .5; cursor: default; }
+.win-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin: 10px 0; }
+.win-stats div { background: #0c172a; padding: 8px 4px; text-align: center; border-radius: 6px; }
+.win-stats span { color: #68758d; font-size: 11px; display: block; }
+.win-stats b { font-size: 12px; }
 .chart { width: 100%; height: 300px; }
 .history-empty { min-height: 170px; margin: 10px 0; display: grid; place-content: center; text-align: center; border: 1px dashed #33445f; border-radius: 7px; color: #9ba8bd; }
 .history-empty p { margin: 5px 0 0; color: #68758d; font-size: 12px; }

@@ -428,6 +428,8 @@ def market_etf_detail(request, code):
     return _market_bad_request(lambda: get_etf_detail(
         code=code,
         range_name=request.query_params.get('range', '3m'),
+        start_date=request.query_params.get('start_date') or None,
+        end_date=request.query_params.get('end_date') or None,
     ))
 
 

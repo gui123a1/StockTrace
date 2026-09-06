@@ -536,6 +536,74 @@ class EtfHistSourceRoutingTests(SimpleTestCase):
         self.assertIsNone(data['price_performance']['return_5d'])
 
 
+class EtfCustomRangeTests(SimpleTestCase):
+    """ETF 详情自定义起止区间：参数校验 + 区间统计。"""
+
+    def setUp(self):
+        market._cache.clear()
+
+    def _quote_patch(self):
+        return patch('stocks.market.etf._normalized_etf_items', return_value=[{
+            'code': '510300', 'name': '沪深300ETF', 'exchange': 'SH',
+            'share': 100, 'data_date': '2026-09-04',
+        }])
+
+    def test_custom_range_fetch_and_stats(self):
+        em_df = pd.DataFrame([
+            {'日期': '2026-08-01', '开盘': 4.0, '收盘': 4.0, '最高': 4.1, '最低': 3.9,
+             '成交量': 1000, '成交额': 4000000, '涨跌幅': 0.0, '换手率': 0.5},
+            {'日期': '2026-08-15', '开盘': 4.1, '收盘': 4.4, '最高': 4.5, '最低': 4.0,
+             '成交量': 2000, '成交额': 8800000, '涨跌幅': 2.0, '换手率': 0.8},
+        ])
+        with self._quote_patch(), patch('akshare.fund_etf_hist_em', return_value=em_df) as em:
+            data = market.get_etf_detail(
+                '510300', 'custom', start_date='2026-08-01', end_date='2026-08-31')
+
+        self.assertEqual(em.call_args.kwargs['start_date'], '20260801')
+        self.assertEqual(em.call_args.kwargs['end_date'], '20260831')
+        # start_date/end_date 是实际数据首尾日（可能窄于请求区间）
+        self.assertEqual(data['history']['start_date'], '2026-08-01')
+        self.assertEqual(data['history']['end_date'], '2026-08-15')
+        stats = data['history']['stats']
+        self.assertEqual(stats['count'], 2)
+        self.assertEqual(stats['change_pct'], 10.0)  # 4.0 -> 4.4
+        self.assertEqual(stats['high'], 4.5)
+        self.assertEqual(stats['low'], 3.9)
+        self.assertEqual(stats['avg_turnover'], 6400000.0)
+
+    def test_custom_range_requires_start(self):
+        with self._quote_patch():
+            with self.assertRaisesMessage(ValueError, 'start_date'):
+                market.get_etf_detail('510300', 'custom')
+
+    def test_custom_range_bad_format(self):
+        with self._quote_patch():
+            with self.assertRaisesMessage(ValueError, 'YYYY-MM-DD'):
+                market.get_etf_detail('510300', 'custom', start_date='20260801')
+
+    def test_custom_range_start_after_end(self):
+        with self._quote_patch():
+            with self.assertRaisesMessage(ValueError, 'start_date'):
+                market.get_etf_detail(
+                    '510300', 'custom', start_date='2026-08-31', end_date='2026-08-01')
+
+    def test_custom_range_too_long(self):
+        with self._quote_patch():
+            with self.assertRaisesMessage(ValueError, '最长'):
+                market.get_etf_detail(
+                    '510300', 'custom', start_date='2020-01-01', end_date='2026-08-31')
+
+    def test_preset_range_still_accepted(self):
+        em_df = pd.DataFrame([
+            {'日期': '2026-09-01', '开盘': 4.0, '收盘': 4.1, '最高': 4.2, '最低': 3.9,
+             '成交量': 1000, '成交额': 4100000, '涨跌幅': 1.2, '换手率': 0.5},
+        ])
+        with self._quote_patch(), patch('akshare.fund_etf_hist_em', return_value=em_df):
+            data = market.get_etf_detail('510300', '1w')
+        self.assertEqual(data['history']['range'], '1w')
+        self.assertEqual(data['history']['stats']['count'], 1)
+
+
 class StockGroupApiTests(TestCase):
     def test_group_crud_assign_and_ungroup_on_delete(self):
         stock = Stock.objects.create(code='600000', name='浦发银行')

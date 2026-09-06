@@ -253,15 +253,23 @@ def _parse_sina_etf_hist(df):
     return items
 
 
-def _etf_history(code, range_name='3m', ttl=1200):
-    cache_key = f'etf_history_{code}_{range_name}'
+def _etf_history(code, range_name='3m', start_date=None, end_date=None, ttl=1200):
+    """range_name 为固定档位；start_date 给定时按自定义起止日期取数（end_date 缺省今天）。"""
+    if start_date:
+        cache_key = f'etf_history_{code}_custom_{start_date}_{end_date or "today"}'
+    else:
+        cache_key = f'etf_history_{code}_{range_name}'
     cached = _cache_get(cache_key, ttl)
     if cached is not None:
         return cached
 
-    days = {'1w': 12, '1m': 45, '3m': 120, '6m': 240, '1y': 400}[range_name]
-    end = datetime.now().date()
-    start = end - timedelta(days=days)
+    if start_date:
+        start = start_date
+        end = end_date or datetime.now().date()
+    else:
+        days = {'1w': 12, '1m': 45, '3m': 120, '6m': 240, '1y': 400}[range_name]
+        end = datetime.now().date()
+        start = end - timedelta(days=days)
     # 多源路由：东财优先；东财失败/限流时切新浪（新浪无成交额/换手率，字段如实为 None）
     df, source = _first_ok([
         (lambda: ak.fund_etf_hist_em(
@@ -305,11 +313,50 @@ def _period_return(history, bars):
     return round((closes[-1] / closes[-bars - 1] - 1) * 100, 3)
 
 
-def get_etf_detail(code, range_name='3m'):
+_CUSTOM_MAX_SPAN_DAYS = 1100  # 自定义区间上限约 3 年，限制返回体规模（1H2G 红线）
+
+
+def _parse_range_date(value, label):
+    try:
+        return datetime.strptime(str(value), '%Y-%m-%d').date()
+    except ValueError:
+        raise ValueError(f'{label} 必须是 YYYY-MM-DD 格式日期')
+
+
+def _window_stats(history):
+    """所选区间的价格统计：区间涨跌以首根收盘为基准，缺字段如实为 None。"""
+    closes = [i['close'] for i in history if i.get('close') is not None]
+    if not closes:
+        return None
+    highs = [i['high'] for i in history if i.get('high') is not None]
+    lows = [i['low'] for i in history if i.get('low') is not None]
+    turnovers = [i['turnover'] for i in history if i.get('turnover') is not None]
+    return {
+        'change_pct': round((closes[-1] / closes[0] - 1) * 100, 3) if closes[0] else None,
+        'high': max(highs) if highs else None,
+        'low': min(lows) if lows else None,
+        'avg_turnover': round(sum(turnovers) / len(turnovers), 2) if turnovers else None,
+        'count': len(history),
+    }
+
+
+def get_etf_detail(code, range_name='3m', start_date=None, end_date=None):
     if not (str(code).isdigit() and len(str(code)) == 6):
         raise ValueError('ETF 代码必须是 6 位数字')
-    if range_name not in ('1w', '1m', '3m', '6m', '1y'):
-        raise ValueError('range 必须是 1w、1m、3m、6m 或 1y')
+    if range_name not in ('1w', '1m', '3m', '6m', '1y', 'custom'):
+        raise ValueError('range 必须是 1w、1m、3m、6m、1y 或 custom')
+    start = end = None
+    if range_name == 'custom':
+        if not start_date:
+            raise ValueError('自定义区间必须提供 start_date')
+        start = _parse_range_date(start_date, 'start_date')
+        end = _parse_range_date(end_date, 'end_date') if end_date else None
+        if end is None:
+            end = datetime.now().date()
+        if start > end:
+            raise ValueError('start_date 不能晚于 end_date')
+        if (end - start).days > _CUSTOM_MAX_SPAN_DAYS:
+            raise ValueError(f'自定义区间最长 {_CUSTOM_MAX_SPAN_DAYS} 天（约 3 年）')
 
     quote = next((item for item in _normalized_etf_items() if item['code'] == code), None)
     if quote is None:
@@ -322,7 +369,7 @@ def get_etf_detail(code, range_name='3m'):
     else:
         chg_payload = {f'share_chg_{n}d': None for n in (1, 5, 20)}
         share_message = '尚未积累日度份额快照，暂不提供 1/5/20 日份额变化。'
-    history = _etf_history(code, range_name=range_name)
+    history = _etf_history(code, range_name=range_name, start_date=start, end_date=end)
     history_key = f'etf_history_{code}_{range_name}'
     history_dates = [item['date'] for item in history if item.get('date')]
     return {
@@ -354,6 +401,7 @@ def get_etf_detail(code, range_name='3m'):
             'count': len(history),
             'start_date': min(history_dates) if history_dates else None,
             'end_date': max(history_dates) if history_dates else None,
+            'stats': _window_stats(history),
             'meta': _cache_meta(
                 history_key,
                 1200,
