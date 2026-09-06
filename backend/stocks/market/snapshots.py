@@ -36,6 +36,17 @@ def save_daily_snapshots(trade_date=None):
     from . import etf  # 延迟导入避免与 etf.py 的快照读路径成环
 
     trade_date = trade_date or timezone.localdate()
+    # 交易日守卫：非交易日（周末/节假日手动触发）落库会产生「最新快照不是最近
+    # 已完成交易日」的脏行，卡死所有窗口指标的时效门槛。日历不可用时不拦截。
+    try:
+        from ..services import is_trading_day
+
+        if is_trading_day(trade_date) is False:
+            logger.info(f'{trade_date} 非交易日，跳过快照落库')
+            return {}
+    except Exception:
+        pass
+
     saved = {}
 
     for kind, func_name in _SECTOR_SNAPSHOT_KINDS.items():

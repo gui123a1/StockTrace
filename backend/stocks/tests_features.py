@@ -307,6 +307,17 @@ class EtfShareSignalTests(TestCase):
         self.assertIn('启发式', data['signals']['message'])
 
 
+class SnapshotTradingDayGuardTests(TestCase):
+    """非交易日落库守卫：周末手动触发的快照会卡死窗口指标时效门槛。"""
+
+    def test_non_trading_day_skips_snapshot(self):
+        saved = snapshots.save_daily_snapshots(trade_date=_BASE + timedelta(days=1))  # 09-05 周六
+        self.assertEqual(saved, {})
+        self.assertFalse(
+            MarketDailySnapshot.objects.filter(trade_date=_BASE + timedelta(days=1)).exists()
+        )
+
+
 class SseShareBackfillTests(TestCase):
     """上交所历史份额回填：解析、幂等落库与详情份额曲线。"""
 
