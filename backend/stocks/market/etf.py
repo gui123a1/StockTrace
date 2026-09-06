@@ -420,6 +420,82 @@ def get_etf_detail(code, range_name='3m', start_date=None, end_date=None):
     }
 
 
+_SHARE_SIGNAL_MIN_PCT = 1.0   # 单只份额单日变化阈值（%）：滤掉日常小额申赎噪音
+_SHARE_SIGNAL_MIN_ABS = 1e8   # 单只绝对份额变化阈值（1 亿份）：与百分比双条件共同过滤
+_SHARE_SIGNAL_SYNC_COUNT = 3  # 同向异动达到该只数才算「同步」（国家队行为的典型特征是多只宽基同日同向）
+_SHARE_SIGNAL_TOP = 10
+
+
+def _share_change_signals():
+    """宽基 ETF 单日份额异动信号（启发式，收盘快照口径）。
+
+    观察逻辑：国家队经 ETF 渠道进出场的公开可观察特征是「多只宽基 ETF 同日
+    大额净申购/净赎回」。阈值规则只为滤噪音，判定结果不是官方持仓数据。
+    """
+    try:
+        from . import snapshots
+        changes, meta = snapshots.latest_pair_change()
+    except Exception:
+        changes, meta = None, None
+    if changes is None:
+        return {
+            'available': False,
+            'message': '份额快照不足两日或已过期，暂无法计算当日份额异动（快照每个交易日收盘后积累）。',
+        }
+
+    in_rows, out_rows = [], []
+    for code, info in changes.items():
+        name = info.get('name') or ''
+        in_scope, _why = _etf_scope({'name': name})
+        if not in_scope:
+            continue
+        pct, chg = info.get('chg_pct'), info.get('chg') or 0
+        if pct is None or abs(pct) < _SHARE_SIGNAL_MIN_PCT or abs(chg) < _SHARE_SIGNAL_MIN_ABS:
+            continue
+        row = {
+            'code': code, 'name': name,
+            'share_chg': chg, 'share_chg_pct': pct,
+            'market_cap': info.get('market_cap'), 'turnover': info.get('turnover'),
+        }
+        (in_rows if chg > 0 else out_rows).append(row)
+
+    in_rows.sort(key=lambda r: abs(r['share_chg']), reverse=True)
+    out_rows.sort(key=lambda r: abs(r['share_chg']), reverse=True)
+    sync_in = len(in_rows) >= _SHARE_SIGNAL_SYNC_COUNT
+    sync_out = len(out_rows) >= _SHARE_SIGNAL_SYNC_COUNT
+    if sync_in and sync_out:
+        signal = 'mixed'
+    elif sync_in:
+        signal = 'sync_in'
+    elif sync_out:
+        signal = 'sync_out'
+    else:
+        signal = 'none'
+
+    return {
+        'available': True,
+        'date': meta['date'],
+        'prev_date': meta['prev_date'],
+        'signal': signal,
+        'in_count': len(in_rows),
+        'out_count': len(out_rows),
+        'in_total_chg': round(sum(r['share_chg'] for r in in_rows), 2) if in_rows else None,
+        'out_total_chg': round(sum(r['share_chg'] for r in out_rows), 2) if out_rows else None,
+        'in_items': in_rows[:_SHARE_SIGNAL_TOP],
+        'out_items': out_rows[:_SHARE_SIGNAL_TOP],
+        'thresholds': {
+            'pct': _SHARE_SIGNAL_MIN_PCT,
+            'abs_share': _SHARE_SIGNAL_MIN_ABS,
+            'sync_count': _SHARE_SIGNAL_SYNC_COUNT,
+        },
+        'message': (
+            f'启发式规则：宽基 ETF 单日份额变化≥{_SHARE_SIGNAL_MIN_PCT:g}%且≥{_SHARE_SIGNAL_MIN_ABS/1e8:g}亿份才计入，'
+            f'≥{_SHARE_SIGNAL_SYNC_COUNT}只同向视为同步异动；份额变化亦可能来自套利赎回或机构配置，'
+            '非官方持仓数据，需结合成交额与季报披露综合判断。'
+        ),
+    }
+
+
 def get_national_team_etfs(ttl=180, force=False):
     """国家队相关 ETF 观察名单，不代表官方持仓披露。"""
     cache_key = 'national_etf'
@@ -475,6 +551,7 @@ def get_national_team_etfs(ttl=180, force=False):
             'total_market_cap': total_market_cap if listed else None,
         },
         'items': items,
+        'signals': _share_change_signals(),
         'message': '' if listed else 'ETF 行情暂不可用',
     }
     _cache_set(cache_key, data)

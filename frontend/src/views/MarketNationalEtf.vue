@@ -21,6 +21,27 @@ const loading = ref(false), error = ref(''), data = ref(null)
 const selectedCode = ref(route.query.code || '')
 const items = computed(() => data.value?.items || [])
 const summary = computed(() => data.value?.summary || {})
+const signals = computed(() => data.value?.signals || null)
+
+const verdictText = computed(() => {
+  const s = signals.value
+  if (!s?.available) return ''
+  if (s.signal === 'sync_in') return '同步净申购信号'
+  if (s.signal === 'sync_out') return '同步净赎回信号'
+  if (s.signal === 'mixed') return '申赎两向均显著'
+  return '无显著异动'
+})
+
+function shareYi(val) {
+  if (val == null || Number.isNaN(Number(val))) return '-'
+  const n = Number(val)
+  return `${n > 0 ? '+' : ''}${(n / 1e8).toFixed(2)} 亿份`
+}
+function pctSigned(val) {
+  if (val == null || Number.isNaN(Number(val))) return '-'
+  const n = Number(val)
+  return `${n > 0 ? '+' : ''}${n.toFixed(2)}%`
+}
 
 async function load() {
   loading.value = true; error.value = ''
@@ -126,6 +147,42 @@ onMounted(() => { load(); loadFlow() })
       <div><label>合计最新份额</label><b>{{ formatShare(summary.total_share) }}</b></div>
       <div><label>合计市场规模</label><b>{{ formatAmount(summary.total_market_cap) }}</b></div>
     </div>
+    <section v-if="signals" class="signal-card">
+      <div class="signal-head">
+        <h2>份额异动信号（宽基）</h2>
+        <small v-if="signals.available">{{ signals.prev_date }} → {{ signals.date }} 收盘对比</small>
+      </div>
+      <template v-if="signals.available">
+        <div class="signal-verdict">
+          <b :class="signals.signal">{{ verdictText }}</b>
+          <span>
+            净申购 {{ signals.in_count ?? 0 }} 只<template v-if="signals.in_total_chg != null">（合计 {{ shareYi(signals.in_total_chg) }}）</template>
+            · 净赎回 {{ signals.out_count ?? 0 }} 只<template v-if="signals.out_total_chg != null">（合计 {{ shareYi(signals.out_total_chg) }}）</template>
+          </span>
+        </div>
+        <div v-if="signals.in_items?.length || signals.out_items?.length" class="signal-lists">
+          <div v-if="signals.in_items?.length" class="signal-col">
+            <label>份额显著增加</label>
+            <div v-for="row in signals.in_items" :key="row.code" class="signal-row">
+              <span class="code">{{ row.code }}</span><span class="name">{{ row.name }}</span>
+              <b :class="pctClass(row.share_chg)">{{ shareYi(row.share_chg) }}</b>
+              <b :class="pctClass(row.share_chg_pct)">{{ pctSigned(row.share_chg_pct) }}</b>
+            </div>
+          </div>
+          <div v-if="signals.out_items?.length" class="signal-col">
+            <label>份额显著减少</label>
+            <div v-for="row in signals.out_items" :key="row.code" class="signal-row">
+              <span class="code">{{ row.code }}</span><span class="name">{{ row.name }}</span>
+              <b :class="pctClass(row.share_chg)">{{ shareYi(row.share_chg) }}</b>
+              <b :class="pctClass(row.share_chg_pct)">{{ pctSigned(row.share_chg_pct) }}</b>
+            </div>
+          </div>
+        </div>
+        <p v-else class="signal-note">今日无达到阈值的宽基份额异动。</p>
+        <p class="signal-note">{{ signals.message }}</p>
+      </template>
+      <p v-else class="signal-note">{{ signals.message }}</p>
+    </section>
     <div class="workbench">
       <section class="table-card"><div class="table-wrap"><table>
         <thead><tr><th>#</th><th>代码</th><th>ETF 名称</th><th>最新价</th><th>涨跌幅</th><th>主力净流入</th><th>最新份额</th><th>总市值</th><th>换手</th><th>折溢价</th></tr></thead>
@@ -180,7 +237,8 @@ onMounted(() => { load(); loadFlow() })
 </template>
 
 <style scoped>
-.page{color:#dce4f2}.page-header{display:flex;justify-content:space-between;gap:12px;margin-bottom:11px}.page-header h1{margin:0;font-size:22px}.page-header p{margin:4px 0 0;color:#71809a;font-size:13px}.title-line{display:flex;align-items:center;gap:9px;flex-wrap:wrap}.title-line span{color:#ffbd6b;background:#382711;border:1px solid #694718;border-radius:5px;padding:3px 7px;font-size:11px}.title-line span.date-chip{color:#8fc6d6;background:#122736;border-color:#2e4a5e}.primary{cursor:pointer;border:1px solid #286391;background:#174673;color:#fff;border-radius:6px;padding:7px 13px}.primary:disabled{opacity:.5}.error-box{background:#3a1520;color:#ff8796;padding:10px;border-radius:7px;margin-bottom:10px}.warning{background:#211b15;border:1px solid #584126;color:#cbb892;padding:10px 12px;border-radius:8px;font-size:12px;margin-bottom:10px;line-height:1.5}.warning b{color:#f0bd71;margin-right:6px}.definition{display:flex;flex-wrap:wrap;gap:8px 18px;background:#0d1729;border:1px solid #293b5b;border-radius:8px;padding:9px 11px;margin-bottom:10px;color:#7e8ca4;font-size:12px}.definition b{color:#aeb9cb}.summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-bottom:10px}.summary-grid>div{background:#111d34;border:1px solid #213251;border-radius:8px;padding:11px}.summary-grid label{display:block;color:#68758d;font-size:11px}.summary-grid b{display:block;margin-top:5px;font-size:17px}.workbench{display:grid;grid-template-columns:minmax(0,1.8fr) minmax(320px,.9fr);gap:10px;margin-bottom:10px;align-items:start}.table-card{min-width:0;background:#111d34;border:1px solid #213251;border-radius:10px;overflow:hidden}.table-wrap{overflow:auto;max-height:720px}table{width:100%;border-collapse:collapse;font-size:12px}th{position:sticky;top:0;background:#0d192d;color:#7887a1;font-weight:500;text-align:right;padding:9px 8px;white-space:nowrap}td{padding:8px;border-bottom:1px solid #1d2a43;text-align:right;white-space:nowrap}th:nth-child(-n+3),td:nth-child(-n+3){text-align:left}tbody tr{cursor:pointer}tbody tr:hover,tbody tr.selected{background:#162b49}tr.muted{opacity:.5;cursor:not-allowed}.code{color:#7eb8e8}.name{color:#e0e7f1}.name small{color:#80736a;font-size:10px;margin-left:4px}.empty{text-align:center;padding:40px;color:#64718a}
+.page{color:#dce4f2}.page-header{display:flex;justify-content:space-between;gap:12px;margin-bottom:11px}.page-header h1{margin:0;font-size:22px}.page-header p{margin:4px 0 0;color:#71809a;font-size:13px}.title-line{display:flex;align-items:center;gap:9px;flex-wrap:wrap}.title-line span{color:#ffbd6b;background:#382711;border:1px solid #694718;border-radius:5px;padding:3px 7px;font-size:11px}.title-line span.date-chip{color:#8fc6d6;background:#122736;border-color:#2e4a5e}.primary{cursor:pointer;border:1px solid #286391;background:#174673;color:#fff;border-radius:6px;padding:7px 13px}.primary:disabled{opacity:.5}.error-box{background:#3a1520;color:#ff8796;padding:10px;border-radius:7px;margin-bottom:10px}.warning{background:#211b15;border:1px solid #584126;color:#cbb892;padding:10px 12px;border-radius:8px;font-size:12px;margin-bottom:10px;line-height:1.5}.warning b{color:#f0bd71;margin-right:6px}.definition{display:flex;flex-wrap:wrap;gap:8px 18px;background:#0d1729;border:1px solid #293b5b;border-radius:8px;padding:9px 11px;margin-bottom:10px;color:#7e8ca4;font-size:12px}.definition b{color:#aeb9cb}.summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-bottom:10px}.summary-grid>div{background:#111d34;border:1px solid #213251;border-radius:8px;padding:11px}.summary-grid label{display:block;color:#68758d;font-size:11px}.summary-grid b{display:block;margin-top:5px;font-size:17px}
+.signal-card{background:#111d34;border:1px solid #213251;border-radius:10px;padding:12px 14px;margin-bottom:10px}.signal-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:9px}.signal-head h2{margin:0;font-size:15px;color:#e6ecf4}.signal-head small{color:#68758d;font-size:11px}.signal-verdict{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:baseline;background:#0d1729;border:1px solid #213251;border-radius:8px;padding:10px 12px;margin-bottom:9px}.signal-verdict b{font-size:15px;color:#8fa0b8}.signal-verdict b.sync_in{color:#ff8796}.signal-verdict b.sync_out{color:#4cd68a}.signal-verdict b.mixed{color:#ffbd6b}.signal-verdict span{color:#9eabc1;font-size:12px}.signal-lists{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-bottom:9px}.signal-col{background:#0d1729;border:1px solid #213251;border-radius:8px;padding:9px 11px}.signal-col label{display:block;color:#68758d;font-size:11px;margin-bottom:6px}.signal-row{display:grid;grid-template-columns:64px minmax(0,1fr) 92px 72px;gap:6px;align-items:baseline;padding:4px 0;border-top:1px solid #1d2a43;font-size:12px}.signal-col .signal-row:first-of-type{border-top:0}.signal-row .code{color:#7eb8e8}.signal-row .name{color:#dce4f2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.signal-row b{text-align:right}.signal-note{margin:0;color:#80736a;font-size:11px;line-height:1.5}.workbench{display:grid;grid-template-columns:minmax(0,1.8fr) minmax(320px,.9fr);gap:10px;margin-bottom:10px;align-items:start}.table-card{min-width:0;background:#111d34;border:1px solid #213251;border-radius:10px;overflow:hidden}.table-wrap{overflow:auto;max-height:720px}table{width:100%;border-collapse:collapse;font-size:12px}th{position:sticky;top:0;background:#0d192d;color:#7887a1;font-weight:500;text-align:right;padding:9px 8px;white-space:nowrap}td{padding:8px;border-bottom:1px solid #1d2a43;text-align:right;white-space:nowrap}th:nth-child(-n+3),td:nth-child(-n+3){text-align:left}tbody tr{cursor:pointer}tbody tr:hover,tbody tr.selected{background:#162b49}tr.muted{opacity:.5;cursor:not-allowed}.code{color:#7eb8e8}.name{color:#e0e7f1}.name small{color:#80736a;font-size:10px;margin-left:4px}.empty{text-align:center;padding:40px;color:#64718a}
 .flow-panel{background:#111d34;border:1px solid #213251;border-radius:10px;padding:12px 14px;margin-bottom:10px}.flow-head{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start;justify-content:space-between;margin-bottom:10px}.flow-head h2{margin:0;font-size:15px;color:#e6ecf4}.flow-head small{display:block;margin-top:4px;color:#68758d;font-size:11px}.flow-tabs-wrap{display:flex;flex-direction:column;gap:8px;align-items:flex-end}.custom-range{display:flex;gap:6px;align-items:center;font-size:12px;color:#9eabc1}.custom-range input{background:#0d1729;border:1px solid #293b5b;color:#ddd;border-radius:5px;padding:4px 7px;color-scheme:dark}.custom-apply{cursor:pointer;border:1px solid #286391;background:#174673;color:#fff;border-radius:5px;padding:5px 12px}.custom-apply:disabled{opacity:.5}.flow-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-bottom:10px}.flow-summary>div{background:#0d1729;border:1px solid #213251;border-radius:8px;padding:10px}.flow-summary label{display:block;color:#68758d;font-size:11px}.flow-summary b{display:block;margin-top:4px;font-size:16px}.flow-note{border:1px solid #554526;background:#201b14;color:#e8b766;border-radius:7px;padding:8px 10px;margin-bottom:10px;font-size:12px}.flow-loading{text-align:center;padding:60px 20px;color:#64718a;font-size:13px}
 @media(max-width:1000px){.workbench{grid-template-columns:1fr}.summary-grid,.flow-summary{grid-template-columns:repeat(2,1fr)}}
 </style>

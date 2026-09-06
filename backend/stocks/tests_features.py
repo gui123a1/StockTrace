@@ -191,6 +191,119 @@ class EtfShareChangeTests(TestCase):
         self.assertIsNone(item['share_chg_5d'])  # 窗口未凑齐如实为 null
 
 
+class EtfShareSignalTests(TestCase):
+    """宽基份额异动信号：最近两日逐 ETF 对比 + 同步异动判定。"""
+
+    def setUp(self):
+        market._cache.clear()
+
+    def _two_days(self, rows_prev, rows_latest):
+        for offset, rows in ((1, rows_prev), (0, rows_latest)):
+            MarketDailySnapshot.objects.create(
+                kind=MarketDailySnapshot.KIND_ETF_SHARE,
+                trade_date=_BASE - timedelta(days=offset),
+                payload=rows,
+            )
+
+    def _with_calendar(self):
+        return patch('stocks.services.is_trading_day', _trading_true), patch(
+            'stocks.market.snapshots._expected_latest_date', return_value=_BASE,
+        )
+
+    def test_latest_pair_change_pct_and_skips_new_listing(self):
+        self._two_days(
+            [{'code': '510300', 'name': '沪深300ETF', 'share': 100e8, 'market_cap': 400e8}],
+            [
+                {'code': '510300', 'name': '沪深300ETF', 'share': 102e8, 'market_cap': 408e8, 'turnover': 5e9},
+                {'code': '159949', 'name': '创业板50ETF', 'share': 90e8, 'market_cap': 300e8},
+            ],
+        )
+        p1, p2 = self._with_calendar()
+        with p1, p2:
+            changes, meta = snapshots.latest_pair_change()
+        self.assertEqual(meta, {
+            'date': _BASE.isoformat(),
+            'prev_date': (_BASE - timedelta(days=1)).isoformat(),
+        })
+        self.assertNotIn('159949', changes)  # 无基期（新上市/新增）跳过
+        row = changes['510300']
+        self.assertAlmostEqual(row['chg'], 2e8)
+        self.assertAlmostEqual(row['chg_pct'], 2.0)
+        self.assertEqual(row['turnover'], 5e9)
+
+    def test_pair_change_degrades_without_two_snapshots(self):
+        MarketDailySnapshot.objects.create(
+            kind=MarketDailySnapshot.KIND_ETF_SHARE,
+            trade_date=_BASE,
+            payload=[{'code': '510300', 'name': '沪深300ETF', 'share': 100e8, 'market_cap': 400e8}],
+        )
+        p1, p2 = self._with_calendar()
+        with p1, p2:
+            changes, meta = snapshots.latest_pair_change()
+        self.assertIsNone(changes)
+        self.assertIsNone(meta)
+
+    def test_sync_in_detected_and_noise_filtered(self):
+        broad = ('510300', '510310', '510320')
+        self._two_days(
+            [
+                {'code': c, 'name': '沪深300ETF', 'share': 100e8, 'market_cap': 400e8} for c in broad
+            ] + [
+                {'code': '510500', 'name': '500ETF', 'share': 50e8, 'market_cap': 250e8},
+                {'code': '510330', 'name': '华夏300ETF', 'share': 20e8, 'market_cap': 80e8},
+                {'code': '510050', 'name': '50ETF', 'share': 100e8, 'market_cap': 280e8},
+                {'code': '511990', 'name': '货币ETF', 'share': 100e8, 'market_cap': 100e8},
+            ],
+            [
+                {'code': c, 'name': '沪深300ETF', 'share': 102e8, 'market_cap': 408e8} for c in broad
+            ] + [
+                {'code': '510500', 'name': '500ETF', 'share': 50.2e8, 'market_cap': 250e8},   # +0.4%：低于百分比阈值
+                {'code': '510330', 'name': '华夏300ETF', 'share': 20.4e8, 'market_cap': 80e8},  # +2% 但仅 0.4 亿份：低于绝对阈值
+                {'code': '510050', 'name': '50ETF', 'share': 98e8, 'market_cap': 280e8},       # -2%/-2亿份：单只净赎回
+                {'code': '511990', 'name': '货币ETF', 'share': 106e8, 'market_cap': 106e8},    # +6%：货币不在宽基范围
+            ],
+        )
+        p1, p2 = self._with_calendar()
+        with p1, p2:
+            result = market.etf._share_change_signals()
+        self.assertTrue(result['available'])
+        self.assertEqual(result['signal'], 'sync_in')
+        self.assertEqual(result['in_count'], 3)
+        self.assertEqual(result['out_count'], 1)
+        self.assertEqual({r['code'] for r in result['in_items']}, set(broad))
+        self.assertEqual(result['out_items'][0]['code'], '510050')
+
+    def test_below_sync_threshold_reports_none(self):
+        self._two_days(
+            [{'code': '510300', 'name': '沪深300ETF', 'share': 100e8, 'market_cap': 400e8}],
+            [{'code': '510300', 'name': '沪深300ETF', 'share': 103e8, 'market_cap': 410e8}],
+        )
+        p1, p2 = self._with_calendar()
+        with p1, p2:
+            result = market.etf._share_change_signals()
+        self.assertTrue(result['available'])
+        self.assertEqual(result['signal'], 'none')
+        self.assertEqual(result['in_count'], 1)
+
+    def test_watchlist_response_carries_signals(self):
+        self._two_days(
+            [{'code': '510300', 'name': '沪深300ETF', 'share': 100e8, 'market_cap': 400e8}],
+            [{'code': '510300', 'name': '沪深300ETF', 'share': 103e8, 'market_cap': 410e8}],
+        )
+        with patch(
+            'stocks.market.etf._fetch_etf_spot_df',
+            return_value=pd.DataFrame([
+                {'代码': '510300', '名称': '沪深300ETF', '最新价': 4.2, '最新份额': 103e8, '数据日期': '2026-09-04'},
+            ]),
+        ), patch('stocks.services.is_trading_day', _trading_true), patch(
+            'stocks.market.snapshots._expected_latest_date', return_value=_BASE,
+        ):
+            data = market.get_national_team_etfs(force=True)
+        self.assertTrue(data['signals']['available'])
+        self.assertEqual(data['signals']['signal'], 'none')
+        self.assertIn('启发式', data['signals']['message'])
+
+
 def _make_quote(stock, close, change_pct, day=_BASE):
     return DailyQuote.objects.create(
         stock=stock, trade_date=day,

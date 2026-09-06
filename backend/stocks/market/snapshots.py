@@ -22,7 +22,8 @@ _SECTOR_SNAPSHOT_KINDS = {
     MarketDailySnapshot.KIND_INDUSTRY_FF: 'fetch_industry_fund_flow',
     MarketDailySnapshot.KIND_CONCEPT_FF: 'fetch_concept_fund_flow',
 }
-_ETF_SNAPSHOT_FIELDS = ('code', 'name', 'share', 'market_cap')
+# turnover 自 2026-09 起纳入：为将来「成交额异动」信号积累历史；旧快照缺该键由读取方如实按 None 处理
+_ETF_SNAPSHOT_FIELDS = ('code', 'name', 'share', 'market_cap', 'turnover')
 _MAX_CALENDAR_LOOKBACK_DAYS = 120
 
 
@@ -160,25 +161,25 @@ def _expected_latest_date():
 def _window_payloads(kind, n):
     """最近 n 个交易日的快照（以最新快照日为窗口末日）。
 
-    返回 (payloads 按日期升序, latest)；窗口不齐、最新快照不是最近已完成
-    交易日（即已过期）或日历不可用时返回 (None, latest)。
+    返回 (payloads 按日期升序, latest, 日期列表)；窗口不齐、最新快照不是最近已完成
+    交易日（即已过期）或日历不可用时返回 (None, latest, None)。
     """
     latest = _latest_snapshot(kind)
     if latest is None:
-        return None, None
+        return None, None, None
     expected = _recent_trading_days(n, end_date=latest.trade_date)
     if expected is None:
-        return None, latest
+        return None, latest, None
     expected_today = _expected_latest_date()
     if expected_today is not None and latest.trade_date != expected_today:
-        return None, latest
+        return None, latest, None
     rows = MarketDailySnapshot.objects.filter(
         kind=kind, trade_date__gte=expected[0], trade_date__lte=expected[-1],
     )
     by_date = {row.trade_date: row.payload for row in rows}
     if any(day not in by_date for day in expected):
-        return None, latest
-    return [by_date[day] for day in expected], latest
+        return None, latest, None
+    return [by_date[day] for day in expected], latest, expected
 
 
 def sector_multiday_nets(kind, n):
@@ -188,7 +189,7 @@ def sector_multiday_nets(kind, n):
     部分行业，不能让缺数据的行业被静默算少）。查库异常按「无快照」降级。
     """
     try:
-        payloads, _latest = _window_payloads(kind, n)
+        payloads, _latest, _dates = _window_payloads(kind, n)
         if payloads is None:
             covered = MarketDailySnapshot.objects.filter(kind=kind).count()
             return None, min(covered, n)
@@ -220,7 +221,7 @@ def share_change_map(n):
     查库异常一律按「无快照」降级（雷达/详情主流程不因快照问题失败）。
     """
     try:
-        payloads, latest = _window_payloads(MarketDailySnapshot.KIND_ETF_SHARE, n + 1)
+        payloads, latest, _dates = _window_payloads(MarketDailySnapshot.KIND_ETF_SHARE, n + 1)
         covered = MarketDailySnapshot.objects.filter(
             kind=MarketDailySnapshot.KIND_ETF_SHARE,
         ).count()
@@ -236,6 +237,41 @@ def share_change_map(n):
             continue
         changes[code] = share - base[code]
     return changes, n
+
+
+def latest_pair_change():
+    """最近两个快照日的逐 ETF 份额对比（份额异动信号检测用）。
+
+    返回 (changes, meta)：changes 为 {code: {name, share, chg, chg_pct, market_cap, turnover}}，
+    meta 为 {'date', 'prev_date'}；窗口不齐/最新快照已过期/查库异常一律 (None, None) 降级。
+    只统计有前一快照基期的 ETF（新上市首日无基期，跳过以免把建仓期当成申赎异动）；
+    turnover 为新增字段，旧快照缺该键如实 None。
+    """
+    try:
+        payloads, _latest, dates = _window_payloads(MarketDailySnapshot.KIND_ETF_SHARE, 2)
+    except Exception:
+        return None, None
+    if payloads is None or not dates:
+        return None, None
+    prev_rows = {row.get('code'): row for row in payloads[0] if row.get('code')}
+    changes = {}
+    for row in payloads[-1]:
+        code = row.get('code')
+        base = prev_rows.get(code)
+        if not code or base is None:
+            continue
+        share, base_share = row.get('share'), base.get('share')
+        if share is None or base_share is None or base_share <= 0:
+            continue
+        changes[code] = {
+            'name': row.get('name'),
+            'share': share,
+            'chg': share - base_share,
+            'chg_pct': round((share / base_share - 1) * 100, 3),
+            'market_cap': row.get('market_cap'),
+            'turnover': row.get('turnover'),
+        }
+    return changes, {'date': dates[-1].isoformat(), 'prev_date': dates[0].isoformat()}
 
 
 def snapshot_meta(source, available, latest=None, message=''):
