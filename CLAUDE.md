@@ -43,7 +43,7 @@ npm run lint && npm run build   # eslint（vue essential 档）+ 产物到 dist/
 | 模型 | `backend/stocks/models.py`（Stock / DailyQuote / MinuteBar） |
 | 自选行情抓取（多源降级） | `backend/stocks/services.py`（EastMoney→Sina→BaoStock→Tencent） |
 | 后台拉取线程 | `backend/stocks/tasks.py`（异步 + fetch-status 轮询） |
-| 行情中心 | `backend/stocks/market/` 包：`_cache`（TTL+交易日历保鲜）/`_sources`（冷却+failover）/`_query`/`periods`（**统一区间解析**）+ `indices`/`flows`/`sectors`/`etf`/`etf_flow`/`institutions`/`sentiment`（涨停池情绪/两融余额）/`snapshots`（日度快照）/`overview` |
+| 行情中心 | `backend/stocks/market/` 包：`_cache`（TTL+交易日历保鲜）/`_sources`（冷却+failover）/`_query`/`periods`（**统一区间解析**）+ `indices`/`flows`/`sectors`/`etf`/`etf_flow`/`institutions`/`sentiment`（涨停池情绪/沪深两融汇总）/`margin_stock`（个股两融明细）/`snapshots`（日度快照+自检）/`holders`（定报持有人结构）/`overview` |
 | 调度器 | `backend/stocks/scheduler.py`（APScheduler + 文件锁单实例） |
 | REST + 页面 | `backend/stocks/views.py` `urls.py`；前端 `frontend/src/views/` `components/` |
 | 前端 API 封装 | `frontend/src/api/stocks.js`（axios baseURL `/api`） |
@@ -61,6 +61,7 @@ npm run lint && npm run build   # eslint（vue essential 档）+ 产物到 dist/
 | `market/northbound/` | 全档 + 自定义 | 北向净买额历史切片 |
 | `market/etfs/<code>/?range=` | `1w/1m/3m/6m/1y` | 价格历史，历史源失败保留现价快照 |
 | `market/institutions/?quarter=` | 季度（`2026Q1`） | 季报，披露滞后 |
+| `market/stock-margin/<code>/` | 当日点值 | 个股两融明细，T+1 披露；非两融标的如实降级 |
 | `market/`、`etf-radar/`、`national-etf/` | 当日快照 | 份额变化与 5/10/20 日轮动**需日度快照积累（二期，勿伪造）** |
 
 所有行情响应带 `meta`（available/source/source_data_date/data_as_of/fetched_at/cache_status/disclaimer）；缓存是交易日历感知的：非交易时段只要缓存已覆盖最近已完成交易日收盘就算新鲜，不重拉上游。
