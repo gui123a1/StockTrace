@@ -107,6 +107,12 @@ cp /opt/stocktrace/backend/db.sqlite3 /opt/stocktrace/backend/db.sqlite3.bak.$(d
 
 # 同步代码（按你习惯：scp / git / tar）
 # 保证 gunicorn_config.py、stocks/tasks.py、scheduler.py 等到位
+#
+# ⚠️ root 身份 tar 解包会把 backend/、frontend/ 目录属主重置为 root，
+#    导致 www 无法在目录里创建 SQLite journal 文件 → 所有查询报
+#    「attempt to write a readonly database」，且被各处容错 except 吞掉、
+#    页面表现为莫名「数据暂不可用」。同步后必须执行：
+#      chown -R www:www /opt/stocktrace
 
 cd /opt/stocktrace
 source backend/venv/bin/activate
