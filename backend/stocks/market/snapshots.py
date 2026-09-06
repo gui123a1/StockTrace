@@ -73,6 +73,7 @@ def save_daily_snapshots(trade_date=None):
             for item in etf._normalized_etf_items()
             if item.get('code') and item.get('share') is not None
         ]
+        rows = _prefer_sse_share_rows(rows, trade_date)
         if rows:
             MarketDailySnapshot.objects.update_or_create(
                 kind=MarketDailySnapshot.KIND_ETF_SHARE,
@@ -283,6 +284,31 @@ def latest_pair_change():
             'turnover': row.get('turnover'),
         }
     return changes, {'date': dates[-1].isoformat(), 'prev_date': dates[0].isoformat()}
+
+
+def _prefer_sse_share_rows(rows, trade_date):
+    """沪市 ETF 份额以上交所官方日度文件为准（披露责任主体），东财 spot 兜底。
+
+    上交所文件仅提供份额，故只覆盖/补齐沪市行的 share，市值与成交额保留东财
+    口径；官方文件当日未出（披露时点不定）或拉取失败时整表沿用东财。
+    """
+    try:
+        sse_rows = fetch_sse_share_rows(trade_date)
+    except Exception as e:
+        logger.warning(f'上交所份额合并失败，etf_share 快照沿用东财: {e}')
+        return rows
+    if not sse_rows:
+        return rows
+    if not rows:
+        return sse_rows
+    by_code = {r['code']: r for r in rows}
+    for sse in sse_rows:
+        row = by_code.get(sse['code'])
+        if row is None:
+            rows.append(sse)  # 东财缺份额的沪市 ETF 用官方份额补齐（市值/成交额如实 None）
+        elif sse['share']:
+            row['share'] = sse['share']
+    return rows
 
 
 def fetch_sse_share_rows(date_obj):

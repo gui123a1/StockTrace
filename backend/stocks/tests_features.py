@@ -53,7 +53,7 @@ class SnapshotSaveTests(TestCase):
         ), patch(
             'stocks.market.etf._normalized_etf_items',
             return_value=[{'code': '510300', 'name': '300ETF', 'share': 100.0, 'market_cap': 400.0}],
-        ):
+        ), patch('akshare.fund_etf_scale_sse', return_value=pd.DataFrame()):
             saved = snapshots.save_daily_snapshots(trade_date=_BASE)
 
         self.assertEqual(saved[MarketDailySnapshot.KIND_INDUSTRY_FF], 1)
@@ -72,7 +72,7 @@ class SnapshotSaveTests(TestCase):
             'stocks.market.sectors.fetch_concept_fund_flow', return_value=[],
         ), patch(
             'stocks.market.etf._normalized_etf_items', return_value=[],
-        ):
+        ), patch('akshare.fund_etf_scale_sse', return_value=pd.DataFrame()):
             snapshots.save_daily_snapshots(trade_date=_BASE)
             items[0]['net'] = 2e8
             snapshots.save_daily_snapshots(trade_date=_BASE)
@@ -1108,3 +1108,75 @@ class MarginBalanceTests(SimpleTestCase):
             d = market.sentiment.fetch_margin_balance(force=True)
         self.assertFalse(d['available'])
         self.assertTrue(d['message'])
+
+
+class SnapshotSseSharePreferenceTests(TestCase):
+    """etf_share 快照沪市份额官方优先：上交所文件覆盖/补齐，东财兜底。"""
+
+    def setUp(self):
+        market._cache.clear()
+
+    @staticmethod
+    def _sse_df():
+        return pd.DataFrame([
+            {'基金代码': '510300', '基金简称': '300ETF', '基金份额': 233.0},
+            {'基金代码': '588000', '基金简称': '科创50ETF', '基金份额': 99.0},
+        ])
+
+    def _save_with(self, em_items, sse):
+        """sse: DataFrame，或 Exception 实例（模拟上游拉取失败）。"""
+        sse_kwargs = (
+            {'side_effect': sse} if isinstance(sse, Exception) else {'return_value': sse}
+        )
+        with patch('stocks.services.is_trading_day', _trading_true), patch(
+            'stocks.market.sectors.fetch_industry_fund_flow', return_value=[],
+        ), patch(
+            'stocks.market.sectors.fetch_concept_fund_flow', return_value=[],
+        ), patch(
+            'stocks.market.flows.fetch_market_fund_flow_hist',
+            return_value={'items': []},
+        ), patch(
+            'stocks.market.etf._normalized_etf_items', return_value=em_items,
+        ), patch('akshare.fund_etf_scale_sse', **sse_kwargs):
+            return snapshots.save_daily_snapshots(trade_date=_BASE)
+
+    def _saved_etf_rows(self):
+        row = MarketDailySnapshot.objects.get(
+            kind=MarketDailySnapshot.KIND_ETF_SHARE, trade_date=_BASE,
+        )
+        return {r['code']: r for r in row.payload}
+
+    def test_sse_overrides_sh_share_and_fills_missing(self):
+        em = [
+            {'code': '510300', 'name': '沪深300ETF', 'share': 230.0, 'market_cap': 900.0, 'turnover': 10.0},
+            {'code': '159915', 'name': '创业板ETF', 'share': 120.0, 'market_cap': 500.0, 'turnover': 8.0},
+        ]
+        saved = self._save_with(em, self._sse_df())
+        self.assertEqual(saved[MarketDailySnapshot.KIND_ETF_SHARE], 3)  # 沪 2 + 深 1
+        rows = self._saved_etf_rows()
+        self.assertEqual(rows['510300']['share'], 233.0)  # 官方份额覆盖
+        self.assertEqual(rows['510300']['market_cap'], 900.0)  # 市值/成交额保留东财口径
+        self.assertEqual(rows['159915']['share'], 120.0)  # 深市不受影响
+        self.assertEqual(rows['588000']['share'], 99.0)  # 东财缺份额的沪市 ETF 官方补齐
+        self.assertIsNone(rows['588000']['market_cap'])
+
+    def test_sse_unavailable_falls_back_to_em(self):
+        em = [{'code': '159915', 'name': '创业板ETF', 'share': 120.0, 'market_cap': 500.0, 'turnover': 8.0}]
+
+        # 当日官方文件未出（空表）
+        saved = self._save_with(em, pd.DataFrame())
+        self.assertEqual(saved[MarketDailySnapshot.KIND_ETF_SHARE], 1)
+        self.assertEqual(self._saved_etf_rows()['159915']['share'], 120.0)
+
+        # 官方源拉取失败
+        MarketDailySnapshot.objects.all().delete()
+        saved = self._save_with(em, RuntimeError('boom'))
+        self.assertEqual(saved[MarketDailySnapshot.KIND_ETF_SHARE], 1)
+        self.assertEqual(self._saved_etf_rows()['159915']['share'], 120.0)
+
+    def test_em_empty_uses_sse_only(self):
+        saved = self._save_with([], self._sse_df())
+        self.assertEqual(saved[MarketDailySnapshot.KIND_ETF_SHARE], 2)
+        rows = self._saved_etf_rows()
+        self.assertEqual(set(rows), {'510300', '588000'})
+        self.assertTrue(all(r['market_cap'] is None for r in rows.values()))
