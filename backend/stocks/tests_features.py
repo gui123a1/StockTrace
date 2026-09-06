@@ -1221,3 +1221,61 @@ class FlowKlinesMirrorFallbackTests(SimpleTestCase):
                 market.etf_flow.fetch_flow_klines('1.000001')
         self.assertIn('push2his', str(cm.exception))
         self.assertIn('push2delay', str(cm.exception))
+
+
+class ThsFundFlowTests(SimpleTestCase):
+    """同花顺板块资金流自实现抓取：分页解析、% 清洗与页面改版时大声失败。"""
+
+    def setUp(self):
+        market._cache.clear()
+        from .market import _sources
+        _sources._source_state.clear()
+
+    class _FakeResp:
+        def __init__(self, text):
+            self.text = text
+
+        def raise_for_status(self):
+            return None
+
+    @staticmethod
+    def _html(rows, page_info='1/2'):
+        trs = ''
+        for i in range(rows):
+            cells = [
+                str(i + 1), '养殖业', '3043.89', '4.36%', '54.33亿', '38.31亿',
+                '16.02亿', '36', '罗牛山', '10.05%', '10.88',
+            ]
+            trs += '<tr>' + ''.join(f'<td>{c}</td>' for c in cells) + '</tr>'
+        return (
+            '<html><body><span class="page_info">' + page_info + '</span>'
+            '<table>' + trs + '</table></body></html>'
+        )
+
+    def test_pagination_parse_and_pct_strip(self):
+        html = self._html(10)
+        seq = [html, self._html(10, page_info='1/2')]
+
+        def fake_get(url, **kwargs):
+            self.assertIn('data.10jqka.com.cn', url)
+            return self._FakeResp(seq.pop(0))
+
+        with patch('stocks.market.sectors._ths_token_headers', return_value={}), \
+             patch('stocks.market.sectors.requests.get', side_effect=fake_get):
+            df = market.sectors._ths_fund_flow('industry')
+        self.assertEqual(len(df), 20)
+        self.assertEqual(list(df.columns)[:2], ['行业', '行业指数'])  # 序号已丢弃
+        self.assertEqual(df['净额'].iloc[0], '16.02亿')
+        self.assertEqual(df['行业-涨跌幅'].iloc[0], '4.36')  # % 已清洗
+        self.assertEqual(df['领涨股-涨跌幅'].iloc[0], '10.05')
+
+    def test_page_layout_change_fails_loud_and_cooldowns(self):
+        bad = '<html><body><table>' + ''.join(f'<td>{i}</td>' for i in range(8)) + '</table></body></html>'
+        with patch('stocks.market.sectors._ths_token_headers', return_value={}), \
+             patch('stocks.market.sectors.requests.get', return_value=type(
+                 'R', (), {'text': bad, 'raise_for_status': lambda self: None},
+             )()):
+            df = market.sectors._ths_fund_flow_df('industry', 'ths_test_src')
+        self.assertIsNone(df)
+        from .market import _sources
+        self.assertGreaterEqual(_sources._source_state['ths_test_src']['fails'], 1)

@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import logging
+import re
+from io import StringIO
 
 import akshare as ak
 import pandas as pd
+import requests
 
 from ._cache import _cache_get, _cache_meta, _cache_set, _now_str, _to_float
 from ._query import _paginate, _sort_items
-from ._sources import _safe_df_call
+from ._sources import _safe_df_call, _source_is_cool, _source_mark_fail, _source_mark_ok
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +82,10 @@ def _parse_fund_flow_table(df, name_col_candidates):
 
     in_col = '流入资金' if '流入资金' in df.columns else None
     out_col = '流出资金' if '流出资金' in df.columns else None
-    pct_col = next((c for c in ('行业-涨跌幅', '涨跌幅') if c in df.columns), None)
-    index_col = '行业指数' if '行业指数' in df.columns else None
+    pct_col = next(
+        (c for c in ('行业-涨跌幅', '概念-涨跌幅', '涨跌幅') if c in df.columns), None,
+    )
+    index_col = next((c for c in ('行业指数', '概念指数') if c in df.columns), None)
     count_col = '公司家数' if '公司家数' in df.columns else None
     leader_col = '领涨股' if '领涨股' in df.columns else None
     leader_pct_col = '领涨股-涨跌幅' if '领涨股-涨跌幅' in df.columns else None
@@ -116,14 +121,109 @@ def _parse_fund_flow_table(df, name_col_candidates):
     return list(by_name.values())
 
 
+# 同花顺板块资金流：东财 push2 clist 板块路径 2026-09 起对境外 502，
+# 同花顺为独立第二源。akshare 1.18.x 同名封装对现行 11 列页面按旧列数
+# 解析会报错，故自行抓取解析（列与页面一致，单位亿元）。
+_THS_BOARD_BASES = {
+    'industry': 'http://data.10jqka.com.cn/funds/hyzjl/',
+    'concept': 'http://data.10jqka.com.cn/funds/gnzjl/',
+}
+_THS_COLUMNS = {
+    'industry': ['序号', '行业', '行业指数', '行业-涨跌幅', '流入资金', '流出资金',
+                 '净额', '公司家数', '领涨股', '领涨股-涨跌幅', '当前价'],
+    'concept': ['序号', '概念', '概念指数', '概念-涨跌幅', '流入资金', '流出资金',
+                '净额', '公司家数', '领涨股', '领涨股-涨跌幅', '当前价'],
+}
+_THS_MAX_PAGES = 50
+
+
+def _ths_token_headers(referer):
+    """同花顺 hexin-v 反爬 token：复用 akshare 自带 ths.js 生成。"""
+    import py_mini_racer
+    from akshare.stock_feature.stock_fund_flow import _get_file_content_ths
+
+    js_code = py_mini_racer.MiniRacer()
+    js_code.eval(_get_file_content_ths('ths.js'))
+    return {
+        'Accept': 'text/html, */*; q=0.01',
+        'Accept-Encoding': 'gzip, deflate',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'hexin-v': js_code.call('v'),
+        'Referer': referer,
+        'User-Agent': (
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+            '(KHTML, like Gecko) Chrome/90.0.4430.85 Safari/537.36'
+        ),
+        'X-Requested-With': 'XMLHttpRequest',
+    }
+
+
+def _ths_fund_flow(board):
+    """抓取同花顺行业/概念资金流当日全量分页，返回与 akshare 输出同构的 DataFrame。"""
+    base = _THS_BOARD_BASES[board]
+    names = _THS_COLUMNS[board]
+    headers = _ths_token_headers(base)
+
+    def _page_html(page):
+        url = f'{base}field/tradezdf/order/desc/page/{page}/ajax/1/free/1/'
+        r = requests.get(url, headers=headers, timeout=10)
+        r.raise_for_status()
+        return r.text
+
+    def _parse(html, page):
+        tables = pd.read_html(StringIO(html))
+        if not tables:
+            raise RuntimeError(f'同花顺第 {page} 页无表格')
+        df = tables[0]
+        if len(df.columns) != len(names):
+            raise RuntimeError(
+                f'同花顺第 {page} 页列数 {len(df.columns)} 与预期 {len(names)} 不符（页面改版）'
+            )
+        df.columns = names
+        return df
+
+    html1 = _page_html(1)
+    frames = [_parse(html1, 1)]
+    m = re.search(r'class="page_info"[^>]*>\s*\d+/(\d+)', html1)
+    page_num = min(int(m.group(1)) if m else 1, _THS_MAX_PAGES)
+    for page in range(2, page_num + 1):
+        frames.append(_parse(_page_html(page), page))
+    df = pd.concat(frames, ignore_index=True)
+    if '序号' in df.columns:
+        df = df.drop(columns=['序号'])
+    # 页面涨跌幅带 % 号（akshare 原封装同样先 strip 再返回）
+    for col in df.columns:
+        if str(col).endswith('涨跌幅'):
+            df[col] = df[col].astype(str).str.strip('%')
+    return df
+
+
+def _ths_fund_flow_df(board, source_name):
+    """带源冷却的同花顺板块资金流抓取；失败计入冷却，避免高频重试。"""
+    if _source_is_cool(source_name):
+        return None
+    try:
+        df = _ths_fund_flow(board)
+    except Exception as e:
+        _source_mark_fail(source_name, e)
+        return None
+    if df is None or df.empty:
+        _source_mark_fail(source_name, 'empty')
+        return None
+    _source_mark_ok(source_name)
+    return df
+
+
 def fetch_concept_fund_flow(period='day', ttl=180):
     cache_key = f'concept_ff_{period}'
     cached = _cache_get(cache_key, ttl)
     if cached is not None:
         return cached
     if period == 'day':
-        df = _safe_df_call(ak.stock_fund_flow_concept, source_name='em_fund_flow_concept')
-        data = _parse_fund_flow_table(df, ['行业', '概念'])
+        df = _ths_fund_flow_df('concept', 'ths_fund_flow_concept')
+        data = _parse_fund_flow_table(df, ['概念', '行业'])
     else:
         indicator = _SECTOR_RANK_INDICATORS[period]
         df = _safe_df_call(
@@ -141,7 +241,7 @@ def fetch_industry_fund_flow(period='day', ttl=180):
     if cached is not None:
         return cached
     if period == 'day':
-        df = _safe_df_call(ak.stock_fund_flow_industry, source_name='em_fund_flow_industry')
+        df = _ths_fund_flow_df('industry', 'ths_fund_flow_industry')
         data = _parse_fund_flow_table(df, ['行业'])
     else:
         indicator = _SECTOR_RANK_INDICATORS[period]
