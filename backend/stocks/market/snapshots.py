@@ -274,6 +274,61 @@ def latest_pair_change():
     return changes, {'date': dates[-1].isoformat(), 'prev_date': dates[0].isoformat()}
 
 
+def fetch_sse_share_rows(date_obj):
+    """上交所官方 ETF 份额（任意历史日期可取，仅沪市）。
+
+    返回快照行 [{code, name, share, market_cap, turnover}]；上游失败或该日无数据
+    返回 []（调用方不写空快照）。market_cap/turnover 该源不提供，如实 None——
+    份额类指标（share_change_map / 异动信号 / 份额曲线）不受影响。
+    """
+    from .etf import _to_float
+
+    try:
+        import akshare as ak
+
+        df = ak.fund_etf_scale_sse(date=date_obj.strftime('%Y%m%d'))
+    except Exception as e:
+        logger.warning(f'上交所 ETF 份额拉取失败（{date_obj}）: {e}')
+        return []
+    if df is None or df.empty:
+        return []
+    rows = []
+    for _, row in df.iterrows():
+        raw_code = str(row.get('基金代码', '')).strip()
+        share = _to_float(row.get('基金份额'))
+        if not raw_code or not share or share <= 0:
+            continue
+        rows.append({
+            'code': raw_code.zfill(6),
+            'name': str(row.get('基金简称', '')).strip(),
+            'share': share,
+            'market_cap': None,
+            'turnover': None,
+        })
+    return rows
+
+
+def share_history_series(code, start_date, end_date):
+    """某 ETF 在 [start, end] 的逐日份额（本站快照，含上交所历史回填）。
+
+    返回 [{'date', 'share'}] 按日期升序；该区间无快照返回 []；查库异常返回 None。
+    """
+    try:
+        rows = MarketDailySnapshot.objects.filter(
+            kind=MarketDailySnapshot.KIND_ETF_SHARE,
+            trade_date__gte=start_date, trade_date__lte=end_date,
+        ).order_by('trade_date').values_list('trade_date', 'payload')
+        out = []
+        for trade_date, payload in rows:
+            for row in payload or []:
+                if row.get('code') == code and row.get('share') is not None:
+                    out.append({'date': trade_date.isoformat(), 'share': row['share']})
+                    break
+        return out
+    except Exception:
+        return None
+
+
 def snapshot_meta(source, available, latest=None, message=''):
     """快照供数端点用的 meta（不走进程内缓存，状态只有 fresh/unavailable）。"""
     return {

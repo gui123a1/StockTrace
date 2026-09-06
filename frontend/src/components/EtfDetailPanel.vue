@@ -32,25 +32,40 @@ const quote = computed(() => data.value?.quote || {})
 const performance = computed(() => data.value?.price_performance || {})
 const history = computed(() => data.value?.history?.items || [])
 const stats = computed(() => data.value?.history?.stats || null)
+const shareHistory = computed(() => data.value?.share_history || null)
 const chartOption = computed(() => {
   if (!history.value.length) return {}
+  const shareMap = {}
+  for (const it of shareHistory.value?.items || []) shareMap[it.date] = it.share
+  const hasShare = !!shareHistory.value?.available && history.value.some(i => shareMap[i.date] != null)
+  const gridRight = hasShare ? 56 : 14
+  const yAxes = [
+    { type: 'value', scale: true, axisLabel: { color: '#6f7d96' }, splitLine: { lineStyle: { color: '#1b2943' } } },
+    { type: 'value', gridIndex: 1, axisLabel: { show: false }, splitLine: { show: false } },
+  ]
+  const series = [
+    { name: '收盘价', type: 'line', showSymbol: false, smooth: true, data: history.value.map(i => i.close), itemStyle: { color: '#e94560' }, lineStyle: { width: 2 } },
+    { name: '成交额', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: history.value.map(i => i.turnover), itemStyle: { color: '#315e8c' } },
+  ]
+  if (hasShare) {
+    yAxes.push({ type: 'value', scale: true, axisLabel: { color: '#9a8a5c', formatter: v => `${(v / 1e8).toFixed(1)}亿` }, splitLine: { show: false } })
+    series.push({
+      name: '份额', type: 'line', yAxisIndex: 2, showSymbol: false,
+      data: history.value.map(i => shareMap[i.date] ?? null),
+      itemStyle: { color: '#d6a13c' }, lineStyle: { width: 1.5, type: 'dashed' },
+    })
+  }
   return {
     backgroundColor: 'transparent',
     tooltip: { trigger: 'axis', backgroundColor: '#101827', borderColor: '#33415f', textStyle: { color: '#ddd' } },
-    legend: { data: ['收盘价', '成交额'], textStyle: { color: '#8490a8' }, top: 0 },
-    grid: [{ left: 45, right: 14, top: 34, height: '54%' }, { left: 45, right: 14, top: '73%', height: '16%' }],
+    legend: { data: hasShare ? ['收盘价', '成交额', '份额'] : ['收盘价', '成交额'], textStyle: { color: '#8490a8' }, top: 0 },
+    grid: [{ left: 45, right: gridRight, top: 34, height: '54%' }, { left: 45, right: gridRight, top: '73%', height: '16%' }],
     xAxis: [
       { type: 'category', data: history.value.map(i => i.date), axisLabel: { color: '#6f7d96', hideOverlap: true, showMinLabel: true, showMaxLabel: true }, axisLine: { lineStyle: { color: '#2b3956' } } },
       { type: 'category', gridIndex: 1, data: history.value.map(i => i.date), axisLabel: { show: false }, axisLine: { lineStyle: { color: '#2b3956' } } },
     ],
-    yAxis: [
-      { type: 'value', scale: true, axisLabel: { color: '#6f7d96' }, splitLine: { lineStyle: { color: '#1b2943' } } },
-      { type: 'value', gridIndex: 1, axisLabel: { show: false }, splitLine: { show: false } },
-    ],
-    series: [
-      { name: '收盘价', type: 'line', showSymbol: false, smooth: true, data: history.value.map(i => i.close), itemStyle: { color: '#e94560' }, lineStyle: { width: 2 } },
-      { name: '成交额', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: history.value.map(i => i.turnover), itemStyle: { color: '#315e8c' } },
-    ],
+    yAxis: yAxes,
+    series,
   }
 })
 
@@ -108,6 +123,8 @@ watch(range, load)
       <p v-if="history.length" class="history-range">
         数据区间 {{ data.history.start_date }} ~ {{ data.history.end_date }} · {{ data.history.count }} 个交易日
       </p>
+      <p v-if="shareHistory?.available" class="history-range">虚线为份额曲线（右轴 · 上交所历史/本站快照）</p>
+      <p v-else-if="shareHistory?.message" class="history-range">{{ shareHistory.message }}</p>
       <div v-else class="history-empty">
         <b>价格历史暂不可用</b>
         <p>当前行情仍可查看；历史数据源恢复后可重新刷新。</p>

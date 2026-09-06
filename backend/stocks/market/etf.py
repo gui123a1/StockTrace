@@ -271,10 +271,8 @@ def _etf_history(code, range_name='3m', start_date=None, end_date=None, ttl=1200
         start = start_date
         end = end_date or datetime.now().date()
     else:
-        # 自然日回看长度：略大于名义周期（节假日缓冲），避免「半年」显示出 8 个月
-        days = {'1w': 12, '1m': 35, '3m': 100, '6m': 190, '1y': 375}[range_name]
         end = datetime.now().date()
-        start = end - timedelta(days=days)
+        start = end - timedelta(days=_RANGE_LOOKBACK_DAYS[range_name])
     # 多源路由：东财优先；东财失败/限流时切新浪（新浪无成交额/换手率，字段如实为 None）
     df, source = _first_ok([
         (lambda: ak.fund_etf_hist_em(
@@ -320,6 +318,9 @@ def _period_return(history, bars):
 
 _CUSTOM_MAX_SPAN_DAYS = 1100  # 自定义区间上限约 3 年，限制返回体规模（1H2G 红线）
 
+# 自然日回看长度：略大于名义周期（节假日缓冲），避免「半年」显示出 8 个月
+_RANGE_LOOKBACK_DAYS = {'1w': 12, '1m': 35, '3m': 100, '6m': 190, '1y': 375}
+
 
 def _parse_range_date(value, label):
     try:
@@ -362,6 +363,9 @@ def get_etf_detail(code, range_name='3m', start_date=None, end_date=None):
             raise ValueError('start_date 不能晚于 end_date')
         if (end - start).days > _CUSTOM_MAX_SPAN_DAYS:
             raise ValueError(f'自定义区间最长 {_CUSTOM_MAX_SPAN_DAYS} 天（约 3 年）')
+    else:
+        end = datetime.now().date()
+        start = end - timedelta(days=_RANGE_LOOKBACK_DAYS[range_name])
 
     quote = next((item for item in _normalized_etf_items() if item['code'] == code), None)
     if quote is None:
@@ -377,6 +381,13 @@ def get_etf_detail(code, range_name='3m', start_date=None, end_date=None):
     history = _etf_history(code, range_name=range_name, start_date=start, end_date=end)
     history_key = _history_cache_key(code, range_name, start, end)
     history_dates = [item['date'] for item in history if item.get('date')]
+    share_series = snapshots.share_history_series(code, start, end)
+    if share_series:
+        share_note = None
+    elif quote.get('exchange') == 'SZ':
+        share_note = '深交所暂无公开历史份额来源，份额曲线将随本站快照积累逐步可用。'
+    else:
+        share_note = '所选区间暂无份额快照（沪市历史可在 VPS 用 backfill_etf_share_sse 回填）。'
     return {
         'meta': _cache_meta(
             'etf_spot_df',
@@ -384,7 +395,7 @@ def get_etf_detail(code, range_name='3m', start_date=None, end_date=None):
             'akshare.fund_etf_spot_em',
             bool(quote),
             source_data_date=quote.get('data_date'),
-            disclaimer='当前行情为 ETF 市场快照；历史图为市场价格日线，不代表基金份额历史。',
+            disclaimer='当前行情为 ETF 市场快照；价格历史为日线行情，份额历史仅沪市可回溯（深市随快照积累）。',
         ),
         'instrument': {'code': quote['code'], 'name': quote['name'], 'exchange': quote['exchange']},
         'quote': quote,
@@ -398,6 +409,19 @@ def get_etf_detail(code, range_name='3m', start_date=None, end_date=None):
             **chg_payload,
             'availability': 'daily_snapshot' if has_chg else 'latest_only',
             'message': share_message,
+        },
+        'share_history': {
+            'available': bool(share_series),
+            'items': share_series or [],
+            'message': share_note,
+            'meta': _cache_meta(
+                'etf_share_snapshots',
+                0,
+                '本站日度快照（沪市历史来自上交所官方接口回填）',
+                bool(share_series),
+                source_data_date=share_series[-1]['date'] if share_series else None,
+                disclaimer='份额为收盘口径；沪市历史由上交所官方接口回填，深市随本站快照积累。',
+            ),
         },
         'history': {
             'range': range_name,
@@ -452,10 +476,14 @@ def _share_change_signals():
         pct, chg = info.get('chg_pct'), info.get('chg') or 0
         if pct is None or abs(pct) < _SHARE_SIGNAL_MIN_PCT or abs(chg) < _SHARE_SIGNAL_MIN_ABS:
             continue
+        share, market_cap = info.get('share'), info.get('market_cap')
+        # 净申购金额估算 = 份额变化 × 净值（净值 = 总市值/份额，来自最新快照行；缺市值如实 None）
+        nav = market_cap / share if (share and market_cap is not None) else None
         row = {
             'code': code, 'name': name,
             'share_chg': chg, 'share_chg_pct': pct,
-            'market_cap': info.get('market_cap'), 'turnover': info.get('turnover'),
+            'est_amount': round(chg * nav, 2) if nav is not None else None,
+            'market_cap': market_cap, 'turnover': info.get('turnover'),
         }
         (in_rows if chg > 0 else out_rows).append(row)
 

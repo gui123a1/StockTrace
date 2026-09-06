@@ -272,6 +272,9 @@ class EtfShareSignalTests(TestCase):
         self.assertEqual(result['out_count'], 1)
         self.assertEqual({r['code'] for r in result['in_items']}, set(broad))
         self.assertEqual(result['out_items'][0]['code'], '510050')
+        # 净申购金额估算：份额变化 × 净值（总市值/份额）；有市值的行有估算值
+        in_row = result['in_items'][0]
+        self.assertAlmostEqual(in_row['est_amount'], 2e8 * (408e8 / 102e8), delta=1)
 
     def test_below_sync_threshold_reports_none(self):
         self._two_days(
@@ -302,6 +305,70 @@ class EtfShareSignalTests(TestCase):
         self.assertTrue(data['signals']['available'])
         self.assertEqual(data['signals']['signal'], 'none')
         self.assertIn('启发式', data['signals']['message'])
+
+
+class SseShareBackfillTests(TestCase):
+    """上交所历史份额回填：解析、幂等落库与详情份额曲线。"""
+
+    def setUp(self):
+        market._cache.clear()
+
+    def test_fetch_sse_share_rows_parses_and_degrades(self):
+        import pandas as pd
+
+        df = pd.DataFrame([
+            {'基金代码': '510300', '基金简称': '300ETF', '基金份额': 233.77e8},
+            {'基金代码': '510050', '基金简称': '50ETF', '基金份额': 0},  # 非正份额跳过
+            {'基金代码': '', '基金简称': '坏行', '基金份额': 1.0},
+        ])
+        with patch('akshare.fund_etf_scale_sse', return_value=df):
+            rows = snapshots.fetch_sse_share_rows(_BASE)
+        self.assertEqual(rows, [
+            {'code': '510300', 'name': '300ETF', 'share': 233.77e8, 'market_cap': None, 'turnover': None},
+        ])
+        with patch('akshare.fund_etf_scale_sse', side_effect=RuntimeError('boom')):
+            self.assertEqual(snapshots.fetch_sse_share_rows(_BASE), [])
+        with patch('akshare.fund_etf_scale_sse', return_value=None):
+            self.assertEqual(snapshots.fetch_sse_share_rows(_BASE), [])
+
+    def test_share_history_series_filters_code_and_sorts(self):
+        for offset in (1, 0):
+            MarketDailySnapshot.objects.create(
+                kind=MarketDailySnapshot.KIND_ETF_SHARE,
+                trade_date=_BASE - timedelta(days=offset),
+                payload=[
+                    {'code': '510300', 'name': '300ETF', 'share': 100.0 + offset, 'market_cap': None},
+                    {'code': '159919', 'name': '300ETF深', 'share': 999.0, 'market_cap': None},
+                ],
+            )
+        series = snapshots.share_history_series('510300', _BASE - timedelta(days=1), _BASE)
+        self.assertEqual([i['share'] for i in series], [101.0, 100.0])  # 升序，仅该代码
+        self.assertEqual(snapshots.share_history_series('999999', _BASE - timedelta(days=1), _BASE), [])
+
+    def test_detail_includes_share_history(self):
+        for offset in (2, 1):
+            MarketDailySnapshot.objects.create(
+                kind=MarketDailySnapshot.KIND_ETF_SHARE,
+                trade_date=date.today() - timedelta(days=offset + 1),
+                payload=[{'code': '510300', 'name': '300ETF', 'share': 100.0 + offset, 'market_cap': None}],
+            )
+        with patch(
+            'stocks.market.etf._normalized_etf_items',
+            return_value=[{'code': '510300', 'name': '300ETF', 'exchange': 'SH', 'share': 102.0}],
+        ), patch(
+            'stocks.market.etf._etf_history',
+            return_value=[
+                {'date': '2026-09-04', 'close': 4.0},
+                {'date': '2026-09-05', 'close': 4.1},
+            ],
+        ):
+            data = market.get_etf_detail('510300', range_name='1m')
+        self.assertTrue(data['share_history']['available'])
+        self.assertEqual(len(data['share_history']['items']), 2)
+        self.assertEqual(
+            data['share_history']['items'][0]['date'],
+            (date.today() - timedelta(days=3)).isoformat(),
+        )
 
 
 def _make_quote(stock, close, change_pct, day=_BASE):
