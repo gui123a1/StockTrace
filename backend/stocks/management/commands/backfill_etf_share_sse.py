@@ -31,7 +31,7 @@ class Command(BaseCommand):
         parser.add_argument('--sleep', type=float, default=0.5, help='交易日间隔秒数（默认 0.5）')
 
     def handle(self, *args, **options):
-        from ..services import is_trading_day
+        from stocks.services import is_trading_day
 
         n_days = options['days']
         sleep_s = options['sleep']
