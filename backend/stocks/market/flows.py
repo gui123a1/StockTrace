@@ -217,7 +217,7 @@ def get_market_fund_flow_window(window, ttl=300):
     上游（push2his）挂掉时窗口仍可用——展示本地已积累的天数并如实提示；
     上游深度约 120 个交易日，超出部分以 coverage_start 如实标注。
     """
-    from .etf_flow import fetch_flow_klines, parse_flow_kline
+    from .etf_flow import _flow_source, fetch_flow_klines, parse_flow_kline
     from .snapshots import market_ff_snapshot_rows
 
     cache_key = period_cache_key('market_ff_win', window)
@@ -286,8 +286,8 @@ def get_market_fund_flow_window(window, ttl=300):
         ),
         'meta': _cache_meta(
             cache_key, ttl,
-            'eastmoney.push2his fflow daykline + 本站日度快照' if snap_in_window
-            else 'eastmoney.push2his fflow daykline (1.000001)',
+            _flow_source() + ' + 本站日度快照' if snap_in_window
+            else _flow_source() + ' (1.000001)',
             bool(rows),
             source_data_date=rows[-1]['date'] if rows else None,
             disclaimer='历史主力净流入来自东方财富；本地快照由收盘后预热自动积累。',

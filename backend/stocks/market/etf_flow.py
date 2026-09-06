@@ -1,11 +1,15 @@
 """国家队 ETF 区间资金流向。
 
-数据源：东方财富 push2his 历史资金流日线（公开接口，未走 akshare——
+数据源：东方财富 fflow 历史资金流日线（公开接口，未走 akshare——
 本机/代理对该域名的 TLS 握手存在间歇性失败，因此用原生 requests
 做 https 重试 + http 兜底，并接入源冷却）。
 
+镜像：push2his 为完整历史（约 120 交易日）；push2delay 为可达镜像但
+仅当日一根——2026-09 起 push2his 对境外来源被上游掐断，push2delay
+作应急兜底（当日值不空白，具体见 fetch_flow_klines）。
+
 边界（如实标注在 meta）：
-- 上游仅提供最近约 120 个交易日的资金流历史，更早无法计算；
+- push2his 仅提供最近约 120 个交易日的资金流历史，更早无法计算；
 - 主力净流入为当日资金快照口径，不代表真实持仓变化；
 - ETF 行字段与股票不同：日期、主力、小单、中单、大单、超大单、
   各占比、收盘、涨跌幅（已按 主力=超大单+大单 校验）。
@@ -24,7 +28,9 @@ from .etf import NATIONAL_TEAM_ETFS
 
 logger = logging.getLogger(__name__)
 
-_FLOW_API = 'push2his.eastmoney.com'
+_FLOW_APIS = ('push2his.eastmoney.com', 'push2delay.eastmoney.com')
+# 最近一次成功供数的镜像（仅用于 meta.source 如实标注；线程间竞态最多错标标签）
+_FLOW_LAST_HOST = {'host': _FLOW_APIS[0]}
 _FLOW_FIELDS = 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65'
 _FLOW_UT = 'b2884a393a59ad64002292a3e90d46a5'
 _FLOW_HIST_TTL = 1800
@@ -40,8 +46,12 @@ _FLOW_TRADING_DAY_PERIODS = ('1d', '3d', '5d')
 _NTF_CONSECUTIVE_FAIL_LIMIT = 3
 
 
+def _flow_source():
+    return f'eastmoney.{_FLOW_LAST_HOST["host"]} fflow daykline'
+
+
 def fetch_flow_klines(secid):
-    """东财 fflow 历史日线原始 klines；https 退避重试 + http 兜底。
+    """东财 fflow 历史日线原始 klines；push2his 失败时退 push2delay（仅当日一根）。
 
     secid 形如 '1.510300'（沪 ETF）、'0.159915'（深 ETF）、'1.000001'（上证指数/大盘）。
     """
@@ -51,22 +61,26 @@ def fetch_flow_klines(secid):
         'fields2': _FLOW_FIELDS,
         'ut': _FLOW_UT,
     }
-    last = None
-    for scheme, backoff in _FLOW_ATTEMPTS:
-        try:
-            resp = requests.get(
-                f'{scheme}://{_FLOW_API}/api/qt/stock/fflow/daykline/get',
-                params=params, timeout=_FLOW_REQUEST_TIMEOUT,
-            )
-            klines = (resp.json().get('data') or {}).get('klines') or []
-            if klines:
-                return klines
-            last = RuntimeError('empty klines')
-        except Exception as e:  # noqa: BLE001  网络/限流逐级降级
-            last = e
-        if backoff:
-            time.sleep(backoff)
-    raise last
+    errors = []
+    for host in _FLOW_APIS:
+        last = None
+        for scheme, backoff in _FLOW_ATTEMPTS:
+            try:
+                resp = requests.get(
+                    f'{scheme}://{host}/api/qt/stock/fflow/daykline/get',
+                    params=params, timeout=_FLOW_REQUEST_TIMEOUT,
+                )
+                klines = (resp.json().get('data') or {}).get('klines') or []
+                if klines:
+                    _FLOW_LAST_HOST['host'] = host
+                    return klines
+                last = RuntimeError('empty klines')
+            except Exception as e:  # noqa: BLE001  网络/限流逐级降级
+                last = e
+            if backoff:
+                time.sleep(backoff)
+        errors.append(f'{host}: {last}')
+    raise RuntimeError('; '.join(errors))
 
 
 def _fetch_klines(code):
@@ -234,7 +248,7 @@ def get_national_team_flow(period='3m', start=None, end=None, ttl=1800):
         ),
         'meta': _cache_meta(
             cache_key, ttl,
-            'eastmoney.push2his fflow daykline',
+            _flow_source(),
             fetched > 0,
             source_data_date=end_date,
             disclaimer=(
@@ -270,7 +284,7 @@ def _unavailable_payload(cache_key, ttl, period, start, reason):
         'failed_codes': [],
         'message': f'东财资金流线路当前不可达（{reason}），稍后可重试',
         'meta': _cache_meta(
-            cache_key, ttl, 'eastmoney.push2his fflow daykline', False,
+            cache_key, ttl, _flow_source(), False,
             disclaimer='历史主力净流入来自东方财富，上游仅提供最近约 120 个交易日。',
         ),
     }

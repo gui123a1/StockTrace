@@ -1180,3 +1180,44 @@ class SnapshotSseSharePreferenceTests(TestCase):
         rows = self._saved_etf_rows()
         self.assertEqual(set(rows), {'510300', '588000'})
         self.assertTrue(all(r['market_cap'] is None for r in rows.values()))
+
+
+class FlowKlinesMirrorFallbackTests(SimpleTestCase):
+    """fflow 抓取双镜像：push2his 被掐时退 push2delay（仅当日一根兜底）。"""
+
+    def setUp(self):
+        market._cache.clear()
+        from .market import _sources
+        _sources._source_state.clear()
+
+    @staticmethod
+    def _resp(klines):
+        return type('R', (), {'json': lambda self: {'data': {'klines': klines}}})()
+
+    def test_falls_back_to_push2delay_and_labels_source(self):
+        urls = []
+
+        def fake_get(url, **kwargs):
+            urls.append(url)
+            if 'push2his' in url:
+                raise RuntimeError('Network is unreachable')
+            return self._resp(['2026-09-07,-1.0e10,1e8,1e8,1e8,1e8,1,1,1,1,1,10.0,1.0'])
+
+        with patch('stocks.market.etf_flow.requests.get', side_effect=fake_get), \
+             patch('stocks.market.etf_flow.time.sleep'):
+            klines = market.etf_flow.fetch_flow_klines('1.000001')
+        self.assertEqual(len(klines), 1)
+        self.assertEqual(
+            market.etf_flow._FLOW_LAST_HOST['host'], 'push2delay.eastmoney.com',
+        )
+        self.assertIn('push2his', urls[0])
+        self.assertIn('push2delay', urls[-1])
+        self.assertIn('push2delay', market.etf_flow._flow_source())
+
+    def test_both_mirrors_fail_raises_with_host_detail(self):
+        with patch('stocks.market.etf_flow.requests.get', side_effect=RuntimeError('down')), \
+             patch('stocks.market.etf_flow.time.sleep'):
+            with self.assertRaises(RuntimeError) as cm:
+                market.etf_flow.fetch_flow_klines('1.000001')
+        self.assertIn('push2his', str(cm.exception))
+        self.assertIn('push2delay', str(cm.exception))
