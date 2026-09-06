@@ -63,18 +63,24 @@ def _message(alert, price):
     return f'{name} 日跌幅已达 {alert.threshold}%'
 
 
+def push_message(title, desp):
+    """可选外发推送（Server酱兼容，POST {title, desp}）；未配置或失败都静默。"""
+    url = getattr(settings, 'STOCKTRACE_PUSH_URL', '') or ''
+    if not url or not desp:
+        return False
+    try:
+        requests.post(url, json={'title': title, 'desp': desp}, timeout=5).raise_for_status()
+        return True
+    except Exception as e:
+        logger.warning(f"推送失败（不影响主流程）: {e}")
+        return False
+
+
 def _push(events):
     """可选外发推送；未配置或失败都不影响主流程（触发记录已在本地）。"""
-    url = getattr(settings, 'STOCKTRACE_PUSH_URL', '') or ''
-    if not url or not events:
+    if not events:
         return
-    lines = '\n'.join(event.message for event in events)
-    try:
-        requests.post(
-            url, json={'title': 'StockTrace 价格提醒', 'desp': lines}, timeout=5,
-        ).raise_for_status()
-    except Exception as e:
-        logger.warning(f"提醒推送失败（不影响本地记录）: {e}")
+    push_message('StockTrace 价格提醒', '\n'.join(event.message for event in events))
 
 
 def evaluate_alerts():

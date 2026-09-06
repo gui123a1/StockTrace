@@ -857,14 +857,19 @@ class MarketFundFlowSnapshotTests(TestCase):
     def setUp(self):
         market._cache.clear()
 
+    @staticmethod
+    def _kline(date_str, main):
+        # fflow daykline 行：日期,主力,小,中,大,超大,占比...,收盘,涨跌幅
+        rest = ','.join(['1.0'] * 5 + ['0.1'] * 5 + ['10.0', '1.0'])
+        return f'{date_str},{main},1.0,1.0,1.0,1.0,{rest}'
+
     def test_save_writes_market_ff_row_for_today(self):
-        today_row = {
-            'date': _BASE.isoformat(), 'main_net': 5.0, 'super_net': 1.0,
-            'large_net': 2.0, 'mid_net': -3.0, 'small_net': -5.0,
-        }
+        def fake_klines(secid):
+            main = -100.0 if secid == '1.000001' else -50.0
+            return [self._kline(_BASE.isoformat(), main)]
+
         with patch(
-            'stocks.market.flows.fetch_market_fund_flow_hist',
-            return_value={'available': True, 'items': [today_row], 'message': '', 'source': 'x'},
+            'stocks.market.etf_flow.fetch_flow_klines', side_effect=fake_klines,
         ), patch(
             'stocks.market.sectors.fetch_industry_fund_flow', return_value=[],
         ), patch(
@@ -878,7 +883,28 @@ class MarketFundFlowSnapshotTests(TestCase):
         row = MarketDailySnapshot.objects.get(
             kind=MarketDailySnapshot.KIND_MARKET_FF, trade_date=_BASE,
         )
-        self.assertEqual(row.payload[0]['main_net'], 5.0)
+        self.assertEqual(row.payload[0]['main_net'], -150.0)  # 沪深同日合并
+
+    def test_partial_market_not_written_as_total(self):
+        def fake_klines(secid):
+            if secid == '0.399001':
+                raise RuntimeError('down')  # 深市缺失：不得把沪市单独冒充两市合计
+            return [self._kline(_BASE.isoformat(), -100.0)]
+
+        with patch(
+            'stocks.market.etf_flow.fetch_flow_klines', side_effect=fake_klines,
+        ), patch(
+            'stocks.market.sectors.fetch_industry_fund_flow', return_value=[],
+        ), patch(
+            'stocks.market.sectors.fetch_concept_fund_flow', return_value=[],
+        ), patch(
+            'stocks.market.etf._normalized_etf_items', return_value=[],
+        ):
+            saved = snapshots.save_daily_snapshots(trade_date=_BASE)
+        self.assertNotIn(MarketDailySnapshot.KIND_MARKET_FF, saved)
+        self.assertFalse(
+            MarketDailySnapshot.objects.filter(kind=MarketDailySnapshot.KIND_MARKET_FF).exists()
+        )
 
     def test_window_falls_back_to_snapshots_when_upstream_down(self):
         for offset, net in ((0, 100.0), (1, -50.0)):
@@ -1133,8 +1159,7 @@ class SnapshotSseSharePreferenceTests(TestCase):
         ), patch(
             'stocks.market.sectors.fetch_concept_fund_flow', return_value=[],
         ), patch(
-            'stocks.market.flows.fetch_market_fund_flow_hist',
-            return_value={'items': []},
+            'stocks.market.etf_flow.fetch_flow_klines', side_effect=RuntimeError('down'),
         ), patch(
             'stocks.market.etf._normalized_etf_items', return_value=em_items,
         ), patch('akshare.fund_etf_scale_sse', **sse_kwargs):
@@ -1296,8 +1321,7 @@ class SnapshotCloseGuardTests(TestCase):
              ), patch(
                  'stocks.market.etf._normalized_etf_items', return_value=[],
              ), patch(
-                 'stocks.market.flows.fetch_market_fund_flow_hist',
-                 return_value={'items': []},
+                 'stocks.market.etf_flow.fetch_flow_klines', side_effect=RuntimeError('down'),
              ), patch('akshare.fund_etf_scale_sse', return_value=pd.DataFrame()):
             tz.localtime.return_value = aware
             return snapshots.save_daily_snapshots(trade_date=trade_date or aware.date())
@@ -1317,3 +1341,78 @@ class SnapshotCloseGuardTests(TestCase):
         # 补写 09-07 历史（当前时刻已是 09-08 上午）不受守卫限制
         saved = self._save_with(datetime(2026, 9, 8, 10, 0), trade_date=datetime(2026, 9, 7).date())
         self.assertEqual(saved[MarketDailySnapshot.KIND_INDUSTRY_FF], 1)
+
+
+class SnapshotSelfCheckTests(TestCase):
+    """快照落库自检：收盘后各 kind 均应有非空行；缺了如实列出。"""
+
+    def _now(self):
+        return timezone.make_aware(datetime(2026, 9, 7, 16, 0))
+
+    def _patch_now(self):
+        tz = patch('stocks.market.snapshots.timezone')
+        mock = tz.start()
+        mock.localtime.return_value = self._now()
+        mock.localdate.return_value = self._now().date()
+        self.addCleanup(tz.stop)
+        return mock
+
+    def _write(self, kind, rows):
+        MarketDailySnapshot.objects.create(
+            kind=kind, trade_date=self._now().date(), payload=rows,
+        )
+
+    def test_all_present_returns_empty(self):
+        self._patch_now()
+        with patch('stocks.services.is_trading_day', _trading_true):
+            self._write(MarketDailySnapshot.KIND_INDUSTRY_FF, [{'name': 'A', 'net': 1.0}])
+            self._write(MarketDailySnapshot.KIND_CONCEPT_FF, [{'name': 'B', 'net': 2.0}])
+            self._write(MarketDailySnapshot.KIND_MARKET_FF, [{'date': '2026-09-07', 'main_net': 1.0}])
+            self._write(MarketDailySnapshot.KIND_ETF_SHARE, [{'code': '510300'}] * 150)
+            missing = snapshots.verify_daily_snapshots()
+        self.assertEqual(missing, [])
+
+    def test_missing_and_thin_kinds_listed(self):
+        self._patch_now()
+        with patch('stocks.services.is_trading_day', _trading_true):
+            self._write(MarketDailySnapshot.KIND_INDUSTRY_FF, [{'name': 'A', 'net': 1.0}])
+            self._write(MarketDailySnapshot.KIND_ETF_SHARE, [{'code': '510300'}] * 3)  # 行数骤减
+            missing = snapshots.verify_daily_snapshots()
+        self.assertEqual(
+            sorted(missing),
+            sorted([MarketDailySnapshot.KIND_CONCEPT_FF, MarketDailySnapshot.KIND_MARKET_FF,
+                    MarketDailySnapshot.KIND_ETF_SHARE]),
+        )
+
+    def test_before_close_or_weekend_returns_none(self):
+        mock = self._patch_now()
+        mock.localtime.return_value = timezone.make_aware(datetime(2026, 9, 7, 10, 0))
+        with patch('stocks.services.is_trading_day', _trading_true):
+            self.assertIsNone(snapshots.verify_daily_snapshots())
+        mock.localtime.return_value = timezone.make_aware(datetime(2026, 9, 7, 16, 0))
+        with patch('stocks.services.is_trading_day', return_value=False):
+            self.assertIsNone(snapshots.verify_daily_snapshots())
+
+
+class PushMessageTests(SimpleTestCase):
+    """通用推送助手：未配置静默跳过，配置后按 Server酱格式 POST。"""
+
+    def setUp(self):
+        from .market import _sources
+        _sources._source_state.clear()
+
+    def test_no_url_is_silent_noop(self):
+        from .alerts import push_message
+        with patch('stocks.alerts.settings') as mock_settings:
+            mock_settings.STOCKTRACE_PUSH_URL = ''
+            self.assertFalse(push_message('t', 'd'))
+
+    def test_posts_title_and_desp(self):
+        from .alerts import push_message
+        with patch('stocks.alerts.settings') as mock_settings, \
+             patch('stocks.alerts.requests.post') as mock_post:
+            mock_settings.STOCKTRACE_PUSH_URL = 'https://push.example/x'
+            mock_post.return_value.raise_for_status.return_value = None
+            self.assertTrue(push_message('标题', '内容'))
+        kwargs = mock_post.call_args.kwargs
+        self.assertEqual(kwargs['json'], {'title': '标题', 'desp': '内容'})

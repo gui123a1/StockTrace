@@ -96,27 +96,86 @@ def save_daily_snapshots(trade_date=None):
     except Exception as e:
         logger.error(f"etf_share 快照落库失败: {e}")
 
-    # 大盘主力资金流：只落当日一行（预热任务已把该序列拉热，走缓存不再打上游）
+    # 大盘主力资金流：自采（push2his 全史 / push2delay 当日一根），沪深两 secid
+    # 同日口径合并；逐行 upsert——push2his 恢复时自动回补历史。单一市场缺失时
+    # 该日不写（不把单市场合计冒充两市）。
     try:
-        from . import flows
-        hist = flows.fetch_market_fund_flow_hist(days=5)
-        today_row = next(
-            (i for i in reversed(hist.get('items', [])) if i.get('date') == trade_date.isoformat()),
-            None,
-        )
-        if today_row:
+        from .etf_flow import fetch_flow_klines, parse_flow_kline
+
+        secids = ('1.000001', '0.399001')
+        by_secid = {}
+        for secid in secids:
+            try:
+                klines = fetch_flow_klines(secid)
+            except Exception as e:
+                logger.warning(f'大盘资金流 {secid} 抓取失败: {e}')
+                continue
+            rows = {}
+            for raw in klines:
+                row = parse_flow_kline(raw)
+                if row:
+                    rows[row['date']] = row
+            if rows:
+                by_secid[secid] = rows
+        # 合计仅用沪深都成功且同日齐全的行
+        dates = set(by_secid[secids[0]]) & set(by_secid[secids[1]]) \
+            if set(by_secid) == set(secids) else set()
+        written = 0
+        for date_str in sorted(dates):
+            merged = {'date': date_str}
+            for key in ('main_net', 'small_net', 'mid_net', 'large_net', 'super_net'):
+                merged[key] = round(
+                    sum((r.get(key) or 0) for r in (secrows[date_str] for secrows in by_secid.values())),
+                    2,
+                )
             MarketDailySnapshot.objects.update_or_create(
                 kind=MarketDailySnapshot.KIND_MARKET_FF,
-                trade_date=trade_date,
-                defaults={'payload': [today_row]},
+                trade_date=date_str,
+                defaults={'payload': [merged]},
             )
-            saved[MarketDailySnapshot.KIND_MARKET_FF] = 1
+            written += 1
+        if written:
+            saved[MarketDailySnapshot.KIND_MARKET_FF] = written
         else:
-            logger.warning(f"market_ff 快照当日无数据，不写行（{trade_date}）")
+            logger.warning(f"market_ff 快照无沪深同日齐全的数据，不写行（{trade_date}）")
     except Exception as e:
         logger.error(f"market_ff 快照落库失败: {e}")
 
     return saved
+
+
+def verify_daily_snapshots(trade_date=None):
+    """快照落库自检：各 kind 均应有当日非空行；缺了如实列出（供预热任务推送告警）。
+
+    仅交易日 15:30 后有意义——之前/非交易日/查询异常返回 None（视为「无可校验」，
+    不告警）。etf_share 为全市场千行级，行数骤减同样视为异常。
+    """
+    from ..services import is_trading_day
+
+    trade_date = trade_date or timezone.localdate()
+    try:
+        if is_trading_day(trade_date) is False:
+            return None
+        if trade_date == timezone.localdate() and timezone.localtime().time() < dt_time(15, 30):
+            return None
+    except Exception:
+        return None
+
+    min_rows = {
+        MarketDailySnapshot.KIND_INDUSTRY_FF: 1,
+        MarketDailySnapshot.KIND_CONCEPT_FF: 1,
+        MarketDailySnapshot.KIND_MARKET_FF: 1,
+        MarketDailySnapshot.KIND_ETF_SHARE: 100,
+    }
+    missing = []
+    try:
+        for kind, floor in min_rows.items():
+            row = MarketDailySnapshot.objects.filter(kind=kind, trade_date=trade_date).first()
+            if row is None or len(row.payload or []) < floor:
+                missing.append(kind)
+    except Exception:
+        return None
+    return missing
 
 
 def market_ff_snapshot_rows(start_date=None, end_date=None):

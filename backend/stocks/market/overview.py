@@ -124,4 +124,32 @@ def warm_post_close_lagging():
     except Exception as e:
         logger.error(f"日度快照落库失败: {e}")
 
+    # 快照自检：缺 kind/行数不足时推送告警（每自然日最多推一次，避免 30 分钟轮询刷屏）
+    try:
+        from django.utils import timezone as _tz
+
+        from ..alerts import push_message
+        from ._cache import _cache_get, _cache_set
+
+        missing = snapshots.verify_daily_snapshots()
+        if missing:
+            key = f"snapshot_alert_{_tz.localdate().isoformat()}"
+            if _cache_get(key, 86400) is None:
+                _cache_set(key, missing)
+                logger.warning(f"日度快照自检缺失: {missing}")
+                push_message(
+                    'StockTrace 快照自检告警',
+                    f"{_tz.localdate()} 快照缺失或行数不足: {', '.join(missing)}\n"
+                    '（大盘/板块资金流可能受上游影响，详见 /api/market/ sources_health）',
+                )
+    except Exception as e:
+        logger.error(f"快照自检失败: {e}")
+
+    # 总览扇出预热：压掉重启/隔夜后首个请求的全量上游冷启动（实测冷启 3 分钟级）
+    try:
+        get_market_overview()
+        logger.info("总览预热完成")
+    except Exception as e:
+        logger.error(f"总览预热失败: {e}")
+
     logger.info(f"收盘后晚到数据预热结束，耗时 {time.time() - started:.1f}s")
