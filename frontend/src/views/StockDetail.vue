@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { stockApi } from '../api/stocks.js'
+import { stockApi, marketApi } from '../api/stocks.js'
 import { formatPct, formatNum, formatDateTime, pctClass } from '../utils/format.js'
 import KlineChart from '../components/KlineChart.vue'
 import IntradayChart from '../components/IntradayChart.vue'
@@ -16,11 +16,22 @@ const dailyData = ref([])
 const latestQuote = ref(null)
 const minuteData = ref([])
 const loading = ref(false)
+const margin = ref(null)
 const days = ref(30)
 
 // 当前走势图显示的日期和对应日K数据
 const intradayDate = ref('')
 const intradayQuote = ref(null)
+
+async function loadMargin() {
+  margin.value = null
+  if (!code.value) return
+  try {
+    margin.value = (await marketApi.getStockMargin(code.value)).data
+  } catch (e) {
+    console.error(e)
+  }
+}
 
 async function loadData() {
   loading.value = true
@@ -93,10 +104,12 @@ function resetAndLoad() {
 
 onMounted(() => {
   loadData()
+  loadMargin()
 })
 
 watch(stockId, () => {
   resetAndLoad()
+  loadMargin()
 })
 </script>
 
@@ -189,6 +202,37 @@ watch(stockId, () => {
         :code="code || stockId"
         @date-click="onKlineDateClick"
       />
+    </div>
+
+    <!-- 两融余额（交易所官方披露） -->
+    <div class="chart-section margin-section" v-if="margin">
+      <h2>两融余额（融资融券）</h2>
+      <template v-if="margin.available">
+        <div class="margin-grid">
+          <div class="margin-item">
+            <span class="label">融资余额</span>
+            <span class="value">{{ margin.rz != null ? margin.rz.toLocaleString() + ' 亿' : '-' }}</span>
+          </div>
+          <div class="margin-item" v-if="margin.rq != null">
+            <span class="label">融券余额</span>
+            <span class="value">{{ margin.rq.toLocaleString() }} 亿</span>
+          </div>
+          <div class="margin-item">
+            <span class="label">两融余额</span>
+            <span class="value">{{ margin.total != null ? margin.total.toLocaleString() + ' 亿' : '-' }}</span>
+          </div>
+          <div class="margin-item">
+            <span class="label">融资余额日变化</span>
+            <span class="value" :class="pctClass(margin.chg_1d)">
+              {{ margin.chg_1d != null ? (margin.chg_1d > 0 ? '+' : '') + margin.chg_1d + ' 亿' : '-' }}
+            </span>
+          </div>
+        </div>
+        <div class="margin-note">
+          截至 {{ margin.date }} · 交易所 T+1 披露<span v-if="margin.message"> · {{ margin.message }}</span>
+        </div>
+      </template>
+      <div v-else class="margin-note">{{ margin.message || '暂不可用' }}</div>
     </div>
 
     <!-- AI 分析 -->
@@ -317,4 +361,18 @@ watch(stockId, () => {
     font-size: 22px;
   }
 }
+.margin-section { margin-top: 16px; }
+.margin-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+.margin-item {
+  background: #1a1a2e;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.margin-item .label { display: block; color: #888; font-size: 12px; margin-bottom: 4px; }
+.margin-item .value { font-size: 16px; font-weight: bold; color: #eee; }
+.margin-note { margin-top: 8px; font-size: 12px; color: #888; }
 </style>

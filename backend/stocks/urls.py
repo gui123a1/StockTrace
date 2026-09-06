@@ -12,6 +12,7 @@ from .views import (
     market_northbound_window,
     market_etf_radar,
     market_etf_detail,
+    market_stock_margin,
     market_institutions,
     alert_list,
     alert_detail,
@@ -58,5 +59,6 @@ urlpatterns = [
     path('market/northbound/', market_northbound_window, name='market-northbound-window'),
     path('market/etf-radar/', market_etf_radar, name='market-etf-radar'),
     path('market/etfs/<str:code>/', market_etf_detail, name='market-etf-detail'),
+    path('market/stock-margin/<str:code>/', market_stock_margin, name='market-stock-margin'),
     path('market/institutions/', market_institutions, name='market-institutions'),
 ]

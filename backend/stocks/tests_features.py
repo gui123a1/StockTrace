@@ -1416,3 +1416,75 @@ class PushMessageTests(SimpleTestCase):
             self.assertTrue(push_message('标题', '内容'))
         kwargs = mock_post.call_args.kwargs
         self.assertEqual(kwargs['json'], {'title': '标题', 'desp': '内容'})
+
+
+class StockMarginTests(SimpleTestCase):
+    """个股两融明细（交易所官方）：单位归一、日变化与非标的降级。"""
+
+    def setUp(self):
+        market._cache.clear()
+        from .market import _sources
+        _sources._source_state.clear()
+
+    @staticmethod
+    def _sse_df(rz_yuan):
+        return pd.DataFrame([{
+            '信用交易日期': 20260904, '标的证券代码': '600519', '标的证券简称': '贵州茅台',
+            '融资余额': rz_yuan, '融资买入额': 1.4e8, '融资偿还额': 1.6e8,
+            '融券余量': 110419, '融券卖出量': 6700, '融券偿还量': 1000,
+        }])
+
+    @staticmethod
+    def _sz_df(rz_yuan, rq_yuan, total_yuan):
+        return pd.DataFrame([{
+            '证券代码': '000001', '证券简称': '平安银行', '融资买入额': 1.2e8,
+            '融资余额': rz_yuan, '融券卖出量': 386672, '融券余量': 7432137,
+            '融券余额': rq_yuan, '融资融券余额': total_yuan,
+        }])
+
+    def test_sse_path_unit_and_change(self):
+        def fake_sse(date):
+            return self._sse_df(1.70e10) if date == '20260903' else self._sse_df(1.73e10)
+
+        with patch('stocks.market.margin_stock._recent_day_candidates',
+                   return_value=[date(2026, 9, 4)]), \
+             patch('stocks.market.margin_stock._prev_trading_day',
+                   return_value=date(2026, 9, 3)), \
+             patch('akshare.stock_margin_detail_sse', side_effect=fake_sse):
+            d = market.fetch_stock_margin('600519', force=True)
+        self.assertTrue(d['available'])
+        self.assertEqual(d['rz'], 173.0)  # 元 → 亿
+        self.assertIsNone(d['rq'])  # 沪市明细无融券余额列
+        self.assertEqual(d['chg_1d'], 3.0)  # 173 - 170
+        self.assertAlmostEqual(d['chg_pct_1d'], 1.76, places=2)
+
+    def test_szse_path_with_rq(self):
+        def fake_sz(date):
+            rz = 46.4e8 if date == '20260904' else 46.0e8
+            return self._sz_df(rz, 0.88e8, rz + 0.88e8)
+
+        with patch('stocks.market.margin_stock._recent_day_candidates',
+                   return_value=[date(2026, 9, 4)]), \
+             patch('stocks.market.margin_stock._prev_trading_day',
+                   return_value=date(2026, 9, 3)), \
+             patch('akshare.stock_margin_detail_szse', side_effect=fake_sz):
+            d = market.fetch_stock_margin('000001', force=True)
+        self.assertTrue(d['available'])
+        self.assertEqual(d['rz'], 46.4)
+        self.assertEqual(d['rq'], 0.88)
+        self.assertEqual(d['total'], 47.28)
+        self.assertEqual(d['chg_1d'], 0.4)
+
+    def test_non_a_share_degrades(self):
+        d = market.fetch_stock_margin('860001', force=True)
+        self.assertFalse(d['available'])
+        self.assertIn('仅沪深', d['message'])
+
+    def test_not_target_degrades(self):
+        with patch('stocks.market.margin_stock._recent_day_candidates',
+                   return_value=[date(2026, 9, 4)]), \
+             patch('akshare.stock_margin_detail_sse',
+                   return_value=pd.DataFrame(columns=['标的证券代码', '融资余额', '标的证券简称'])):
+            d = market.fetch_stock_margin('600519', force=True)
+        self.assertFalse(d['available'])
+        self.assertTrue(d['message'])

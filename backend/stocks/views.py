@@ -22,6 +22,7 @@ from .market import (
     get_northbound_window,
     get_etf_share_radar,
     get_etf_detail,
+    fetch_stock_margin,
     get_institution_holdings,
 )
 from .market.periods import FULL_PRESETS, resolve_period
@@ -431,6 +432,12 @@ def market_etf_detail(request, code):
         start_date=request.query_params.get('start_date') or None,
         end_date=request.query_params.get('end_date') or None,
     ))
+
+
+@api_view(['GET'])
+def market_stock_margin(request, code):
+    """个股两融余额（交易所官方披露，T+1）。"""
+    return _market_bad_request(lambda: fetch_stock_margin(code.zfill(6)))
 
 
 @api_view(['GET'])

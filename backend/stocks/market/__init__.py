@@ -41,6 +41,7 @@ from .flows import (
     get_market_fund_flow_window,
     get_northbound_window,
 )
+from .margin_stock import fetch_stock_margin
 from .indices import MAJOR_INDICES, TREND_INDICES, fetch_index_trend, fetch_major_indices
 from .institutions import (
     fetch_institute_hold_stocks,
@@ -62,6 +63,7 @@ from .sectors import (
 __all__ = [
     # 视图 / 调度主入口
     'get_market_overview',
+    'fetch_stock_margin',
     'get_market_trend',
     'get_sector_rotation',
     'get_national_team_etfs',

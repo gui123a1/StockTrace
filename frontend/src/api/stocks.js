@@ -102,6 +102,10 @@ export const marketApi = {
   getEtfDetail(code, params = {}) {
     return api.get(`/market/etfs/${code}/`, { ...marketTimeout, params })
   },
+  // 个股两融余额（交易所官方披露，T+1；非两融标的如实降级）
+  getStockMargin(code) {
+    return api.get(`/market/stock-margin/${code}/`, marketTimeout)
+  },
   // 大盘主力资金流区间聚合（上游仅约 120 个交易日，超出会标 truncated）
   getMarketFlow(params = {}) {
     return api.get('/market/market-flow/', { ...marketTimeout, params })
