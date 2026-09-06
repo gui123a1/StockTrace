@@ -9,7 +9,7 @@ from ._cache import _now_str
 from ._sources import get_source_health
 from .etf import _fetch_etf_spot_df, get_etf_share_radar, get_national_team_etfs
 from .flows import fetch_hsgt_flow, fetch_market_activity, fetch_market_fund_flow_hist
-from .indices import fetch_index_trend, fetch_major_indices
+from .indices import fetch_index_trend, fetch_index_valuations, fetch_major_indices
 from .sectors import _sector_payload, fetch_concept_fund_flow
 
 logger = logging.getLogger(__name__)
@@ -34,6 +34,7 @@ def get_market_overview():
     return {
         'updated_at': _now_str(),
         'indices': indices,
+        'valuations': fetch_index_valuations(),
         'fund': {
             'hsgt': hsgt,
             'northbound_net_buy': north_net if north_has else None,

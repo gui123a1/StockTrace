@@ -5,7 +5,7 @@ from __future__ import annotations
 import akshare as ak
 import pandas as pd
 
-from ._cache import _cache_get, _cache_set, _stale_or, _to_float
+from ._cache import _cache_get, _cache_meta, _cache_set, _stale_or, _to_float
 from ._sources import _safe_df_call
 
 MAJOR_INDICES = [
@@ -133,4 +133,55 @@ def fetch_index_trend(days=120, ttl=300, start=None, end=None):
         'message': '' if series else '指数日线暂不可用',
     }
     _cache_set(cache_key, data)
+    return data
+
+# 乐咕乐股滚动市盈率覆盖的宽基（创业板指/科创50 该源未提供，如实缺席）
+_VALUATION_INDICES = ('沪深300', '上证50', '中证500', '中证1000')
+
+
+def fetch_index_valuations(ttl=21600, force=False):
+    """宽基指数滚动市盈率与历史分位（乐咕乐股，日频更新）。
+
+    分位 = 当前 PE 在该源全部可得历史（月度，最早自 2005 年）内的排名占比；
+    单只失败跳过，全部失败如实不可用。
+    """
+    if not force:
+        cached = _cache_get('index_valuations', ttl)
+        if cached is not None:
+            return cached
+
+    items = []
+    for name in _VALUATION_INDICES:
+        df = _safe_df_call(ak.stock_index_pe_lg, symbol=name, source_name=f'lg_index_pe_{name}')
+        if df is None or df.empty or '滚动市盈率' not in df.columns:
+            continue
+        pe = pd.to_numeric(df['滚动市盈率'], errors='coerce').dropna()
+        dates = pd.to_datetime(df.get('日期'), errors='coerce').dropna()
+        if pe.empty or dates.empty:
+            continue
+        latest = float(pe.iloc[-1])
+        items.append({
+            'name': name,
+            'pe': round(latest, 2),
+            'pe_percentile': round(float((pe < latest).mean() * 100), 1),
+            'history_count': int(len(pe)),
+            'start_date': dates.iloc[0].strftime('%Y-%m-%d'),
+            'date': dates.iloc[-1].strftime('%Y-%m-%d'),
+        })
+
+    data = {
+        'available': bool(items),
+        'items': items,
+        'message': '' if items else '指数估值暂不可用',
+        'meta': _cache_meta(
+            'index_valuations',
+            ttl,
+            'akshare.stock_index_pe_lg (乐咕乐股)',
+            bool(items),
+            source_data_date=items[-1]['date'] if items else None,
+            disclaimer='分位为当前滚动市盈率在该源全部可得历史（月度，自 2005 年）内的排名；创业板指/科创50 该源未提供。',
+        ),
+    }
+    if items:
+        _cache_set('index_valuations', data)
     return data

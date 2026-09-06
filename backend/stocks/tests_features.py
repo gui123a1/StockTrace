@@ -928,3 +928,48 @@ class MarketFundFlowSnapshotTests(TestCase):
         self.assertEqual(data['summary']['inflow_days'], 1)
         self.assertEqual(data['summary']['outflow_days'], 1)
         self.assertEqual(data['message'], '')  # 上游可用时不提示降级
+
+
+class IndexValuationTests(SimpleTestCase):
+    """宽基指数估值分位（乐咕月度 PE）：分位计算与如实降级。"""
+
+    def setUp(self):
+        market._cache.clear()
+        from .market import _sources
+        _sources._source_state.clear()  # 清共享源冷却状态，避免用例间串扰
+
+    @staticmethod
+    def _pe_df(pes):
+        return pd.DataFrame({
+            '日期': [f'2026-0{i+1}-01' for i in range(len(pes))],
+            '滚动市盈率': pes,
+        })
+
+    def test_percentile_computed_and_all_indices_present(self):
+        pes = [10.0, 20.0, 15.0]
+        with patch('akshare.stock_index_pe_lg', side_effect=lambda symbol: self._pe_df(pes)):
+            d = market.indices.fetch_index_valuations(force=True)
+        self.assertTrue(d['available'])
+        self.assertEqual({i['name'] for i in d['items']}, {'沪深300', '上证50', '中证500', '中证1000'})
+        it = d['items'][0]
+        self.assertEqual(it['pe'], 15.0)
+        self.assertAlmostEqual(it['pe_percentile'], 33.3)  # 历史中小于当前的占比 1/3
+        self.assertEqual(it['history_count'], 3)
+
+    def test_partial_failure_skips_only_failed_index(self):
+        def fake(symbol):
+            if symbol == '中证1000':
+                raise RuntimeError('boom')
+            return self._pe_df([10.0, 12.0])
+
+        with patch('akshare.stock_index_pe_lg', side_effect=fake):
+            d = market.indices.fetch_index_valuations(force=True)
+        self.assertTrue(d['available'])
+        self.assertEqual({i['name'] for i in d['items']}, {'沪深300', '上证50', '中证500'})
+
+    def test_all_fail_degrades_honestly(self):
+        with patch('akshare.stock_index_pe_lg', side_effect=RuntimeError('boom')):
+            d = market.indices.fetch_index_valuations(force=True)
+        self.assertFalse(d['available'])
+        self.assertEqual(d['items'], [])
+        self.assertTrue(d['message'])

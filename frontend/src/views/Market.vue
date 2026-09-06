@@ -38,6 +38,7 @@ const defaultModules = [
 ]
 
 const indices = computed(() => overview.value?.indices || [])
+const valuations = computed(() => overview.value?.valuations || { available: false, items: [] })
 const fund = computed(() => overview.value?.fund || {})
 const activity = computed(() => fund.value.activity || {})
 const hsgt = computed(() => fund.value.hsgt || [])
@@ -218,6 +219,31 @@ onUnmounted(() => {
       </div>
     </section>
 
+    <!-- 宽基指数估值分位 -->
+    <section v-if="valuations.items?.length" class="section">
+      <div class="section-head">
+        <h2>指数估值（滚动市盈率）</h2>
+        <span v-if="valuations.meta?.disclaimer" class="val-note">{{ valuations.meta.disclaimer }}</span>
+      </div>
+      <div class="val-grid">
+        <div v-for="v in valuations.items" :key="v.name" class="val-card">
+          <div class="val-head">
+            <span class="val-name">{{ v.name }}</span>
+            <span class="val-date">截至 {{ v.date }}</span>
+          </div>
+          <div class="val-pe">PE-TTM <b>{{ v.pe }}</b></div>
+          <div class="val-bar">
+            <div class="val-bar-fill" :style="{ width: v.pe_percentile + '%' }"></div>
+            <span class="val-mark" :style="{ left: v.pe_percentile + '%' }"></span>
+          </div>
+          <div class="val-pct">
+            历史分位 <b :class="v.pe_percentile <= 30 ? 'v-low' : (v.pe_percentile >= 70 ? 'v-high' : '')">{{ v.pe_percentile }}%</b>
+          </div>
+          <div class="val-span">区间 {{ v.start_date }} ~ {{ v.date }} · {{ v.history_count }} 日</div>
+        </div>
+      </div>
+    </section>
+
     <!-- 资金与情绪摘要 -->
     <section class="section">
       <div class="section-head">
@@ -351,6 +377,26 @@ onUnmounted(() => {
 
 <style scoped>
 .market-page { color: #ddd; }
+
+/* 指数估值分位 */
+.val-note { color: #68758d; font-size: 11px; }
+.val-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.val-card { background: #111d34; border: 1px solid #213251; border-radius: 10px; padding: 12px; }
+.val-head { display: flex; justify-content: space-between; align-items: baseline; }
+.val-name { font-size: 14px; color: #e0e7f1; }
+.val-date { color: #68758d; font-size: 10px; }
+.val-pe { margin-top: 8px; color: #8490a8; font-size: 12px; }
+.val-pe b { font-size: 20px; color: #e0e7f1; margin-left: 6px; }
+.val-bar { position: relative; height: 8px; background: #0c172a; border-radius: 4px; margin: 10px 0 8px; overflow: visible; }
+.val-bar-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, #2f6f5e, #d6a13c, #c0392b); }
+.val-mark { position: absolute; top: -3px; width: 2px; height: 14px; background: #fff; }
+.val-pct { color: #8490a8; font-size: 12px; }
+.val-pct b { margin-left: 4px; }
+.val-pct b.v-low { color: #d6a13c; }
+.val-pct b.v-high { color: #ff8796; }
+.val-span { margin-top: 6px; color: #68758d; font-size: 10px; }
+@media (max-width: 1000px) { .val-grid { grid-template-columns: repeat(2, 1fr); } }
+
 
 .page-header {
   display: flex;
