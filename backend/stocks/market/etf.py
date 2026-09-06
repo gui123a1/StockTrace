@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import akshare as ak
 
 from ._cache import _cache_get, _cache_meta, _cache_set, _now_str, _stale_or, _to_float
+from .holders import fetch_holder_structure
 from ._query import _paginate, _sort_items
 from ._sources import _first_ok, _safe_df_call
 from . import snapshots
@@ -423,6 +424,7 @@ def get_etf_detail(code, range_name='3m', start_date=None, end_date=None):
                 disclaimer='份额为收盘口径；沪市历史由上交所官方接口回填，深市随本站快照积累。',
             ),
         },
+        'holder_structure': fetch_holder_structure(code),
         'history': {
             'range': range_name,
             'interval': '1d',

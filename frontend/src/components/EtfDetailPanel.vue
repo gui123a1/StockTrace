@@ -33,6 +33,7 @@ const performance = computed(() => data.value?.price_performance || {})
 const history = computed(() => data.value?.history?.items || [])
 const stats = computed(() => data.value?.history?.stats || null)
 const shareHistory = computed(() => data.value?.share_history || null)
+const holders = computed(() => data.value?.holder_structure || null)
 const chartOption = computed(() => {
   if (!history.value.length) return {}
   const shareMap = {}
@@ -129,6 +130,30 @@ watch(range, load)
         <b>价格历史暂不可用</b>
         <p>当前行情仍可查看；历史数据源恢复后可重新刷新。</p>
       </div>
+
+      <!-- 持有人结构（定报，半年频）：汇金等长线配置盘的间接观察 -->
+      <div v-if="holders?.available && holders.items?.length" class="holders">
+        <div class="holders-head">
+          <b>持有人结构（基金定报）</b>
+          <span>机构占比最新 {{ holders.items[0].institution_pct ?? '-' }}%</span>
+          <span v-if="holders.items.length > 1 && holders.items[0].institution_pct != null && holders.items[1].institution_pct != null">
+            环比上一期 {{ (holders.items[0].institution_pct - holders.items[1].institution_pct > 0 ? '+' : '') + (holders.items[0].institution_pct - holders.items[1].institution_pct).toFixed(1) }}pct
+          </span>
+        </div>
+        <table class="holders-table">
+          <thead><tr><th>公告期</th><th>机构</th><th>个人</th><th>内部</th><th>总份额（亿份）</th></tr></thead>
+          <tbody>
+            <tr v-for="h in holders.items.slice(0, 4)" :key="h.announce_date">
+              <td>{{ h.announce_date }}</td>
+              <td>{{ h.institution_pct ?? '-' }}%</td>
+              <td>{{ h.individual_pct ?? '-' }}%</td>
+              <td>{{ h.internal_pct ?? '-' }}%</td>
+              <td>{{ h.total_shares ?? '-' }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="holders-note">{{ holders.meta?.disclaimer }}</p>
+      </div>
       <div v-if="stats" class="win-stats">
         <div><span>区间涨跌</span><b :class="pctClass(stats.change_pct)">{{ formatPct(stats.change_pct) }}</b></div>
         <div><span>区间最高</span><b>{{ formatNum(stats.high) }}</b></div>
@@ -180,4 +205,11 @@ h2 { margin: 0; font-size: 18px; } header span { color: #71809a; font-size: 12px
 .history-empty p { margin: 5px 0 0; color: #68758d; font-size: 12px; }
 .returns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }.returns div { background: #0c172a; padding: 8px; text-align: center; border-radius: 6px; }.returns span { color: #68758d; font-size: 11px; display: block; }
 .share-note { margin: 12px 0; padding: 10px; border: 1px dashed #33445f; border-radius: 7px; color: #a8b3c7; font-size: 12px; }.share-note p { margin: 4px 0 0; color: #6e7b93; line-height: 1.5; }.share-chgs { display: flex; gap: 12px; margin-top: 8px; }.share-chgs span { color: #6e7b93; }.share-chgs b { margin-left: 4px; }
+.holders { margin-top: 10px; }
+.holders-head { display: flex; gap: 14px; align-items: baseline; font-size: 13px; color: #ccc; margin-bottom: 6px; }
+.holders-head span { color: #888; font-size: 12px; }
+.holders-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.holders-table th, .holders-table td { padding: 4px 8px; text-align: right; border-bottom: 1px solid #26263a; color: #bbb; }
+.holders-table th:first-child, .holders-table td:first-child { text-align: left; }
+.holders-note { margin-top: 6px; font-size: 11px; color: #777; }
 </style>

@@ -1488,3 +1488,40 @@ class StockMarginTests(SimpleTestCase):
             d = market.fetch_stock_margin('600519', force=True)
         self.assertFalse(d['available'])
         self.assertTrue(d['message'])
+
+
+class HolderStructureTests(SimpleTestCase):
+    """ETF 持有人结构（定报间接口径）：% 清洗与上游降级。"""
+
+    def setUp(self):
+        market._cache.clear()
+
+    @staticmethod
+    def _fixture():
+        return (
+            "var apidata={ content:\"<table><thead><tr><th>公告日期</th><th>机构持有比例</th>"
+            "<th>个人持有比例</th><th>内部持有比例</th><th>总份额（亿份）</th></tr></thead><tbody>"
+            "<tr><td>2026-06-30</td><td class='tor'>61.65%</td><td class='tor'>32.95%</td>"
+            "<td class='tor'>5.40%</td><td class='tor'>189.15</td></tr>"
+            "<tr><td>2025-12-31</td><td class='tor'>90.27%</td><td class='tor'>8.98%</td>"
+            "<td class='tor'>0.75%</td><td class='tor'>888.30</td></tr>"
+            "</tbody></table>\"};"
+        )
+
+    def test_parses_and_strips_pct(self):
+        resp = type('R', (), {
+            'text': self._fixture(), 'raise_for_status': lambda self: None,
+        })()
+        with patch('stocks.market.holders.requests.get', return_value=resp):
+            d = market.holders.fetch_holder_structure('510300', force=True)
+        self.assertTrue(d['available'])
+        self.assertEqual(len(d['items']), 2)
+        self.assertEqual(d['items'][0]['institution_pct'], 61.65)  # % 已清洗
+        self.assertEqual(d['items'][0]['total_shares'], 189.15)
+        self.assertIn('间接观察', d['meta']['disclaimer'])
+
+    def test_upstream_fail_degrades(self):
+        with patch('stocks.market.holders.requests.get', side_effect=RuntimeError('boom')):
+            d = market.holders.fetch_holder_structure('510300', force=True)
+        self.assertFalse(d['available'])
+        self.assertTrue(d['message'])
