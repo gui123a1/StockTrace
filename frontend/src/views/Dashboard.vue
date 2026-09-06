@@ -62,7 +62,7 @@ async function removeGroup(g) {
     await groupApi.remove(g.id)
     if (activeGroup.value === g.id) activeGroup.value = 'all'
     await Promise.all([loadGroups(), loadDashboard()])
-  } catch (e) {
+  } catch {
     alert('删除分组失败')
   }
 }
