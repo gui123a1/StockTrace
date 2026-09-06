@@ -8,11 +8,11 @@ export function formatPct(val) {
   return `${sign}${num.toFixed(2)}%`
 }
 
-export function formatNum(val) {
+export function formatNum(val, digits = 2) {
   if (val == null) return '-'
   const num = Number(val)
   if (Number.isNaN(num)) return '-'
-  return num.toFixed(2)
+  return num.toFixed(digits)
 }
 
 export function pctClass(val) {
