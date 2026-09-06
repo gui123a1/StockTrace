@@ -973,3 +973,138 @@ class IndexValuationTests(SimpleTestCase):
         self.assertFalse(d['available'])
         self.assertEqual(d['items'], [])
         self.assertTrue(d['message'])
+
+
+class _FakeDate(date):
+    """固定「今天」，使两融/池情绪的按日回退测试与运行日期无关。"""
+
+    @classmethod
+    def today(cls):
+        return date(2026, 9, 6)  # 周日：今天应被跳过、回退到最近交易日
+
+
+class ZtSentimentTests(SimpleTestCase):
+    """涨跌停池情绪：池口径指标、非交易日回退与如实降级。"""
+
+    def setUp(self):
+        market._cache.clear()
+        from .market import _sources
+        _sources._source_state.clear()  # 清共享源冷却状态，避免用例间串扰
+
+    @staticmethod
+    def _zt_df():
+        return pd.DataFrame({
+            '代码': ['605577', '605398'], '名称': ['龙版传媒', '新炬网络'],
+            '涨跌幅': [9.97, 9.98], '最新价': [15.55, 26.66],
+            '成交额': [5.0e8, 1.0e8], '连板数': [5, 2], '所属行业': ['出版', 'IT服务'],
+        })
+
+    def test_metrics_top_and_seal_rate(self):
+        with patch('stocks.market.sentiment.is_trading_day', return_value=True), \
+             patch('stocks.market.sentiment._date', _FakeDate), \
+             patch('akshare.stock_zt_pool_em', return_value=self._zt_df()), \
+             patch('akshare.stock_zt_pool_dtgc_em', return_value=pd.DataFrame({'x': [1]})), \
+             patch('akshare.stock_zt_pool_zbgc_em', return_value=pd.DataFrame({'x': [1, 2, 3]})):
+            d = market.sentiment.fetch_zt_sentiment(force=True)
+        self.assertTrue(d['available'])
+        self.assertEqual(d['zt_count'], 2)
+        self.assertEqual(d['dt_count'], 1)
+        self.assertEqual(d['zb_count'], 3)
+        self.assertEqual(d['seal_rate'], 40.0)  # 2/(2+3)
+        self.assertEqual(d['max_lb'], 5)
+        self.assertEqual(d['lb_count'], 2)
+        self.assertTrue(d['is_live'])
+        self.assertEqual(d['top'][0]['name'], '龙版传媒')  # 连板数降序
+        self.assertEqual(d['top'][0]['lb'], 5)
+
+    def test_fallback_to_recent_day_when_today_empty(self):
+        seq = iter([pd.DataFrame(), self._zt_df()])
+
+        with patch('stocks.market.sentiment.is_trading_day', return_value=True), \
+             patch('stocks.market.sentiment._date', _FakeDate), \
+             patch('akshare.stock_zt_pool_em', side_effect=lambda date: next(seq)), \
+             patch('akshare.stock_zt_pool_dtgc_em', return_value=pd.DataFrame()), \
+             patch('akshare.stock_zt_pool_zbgc_em', return_value=pd.DataFrame()):
+            d = market.sentiment.fetch_zt_sentiment(force=True)
+        self.assertTrue(d['available'])
+        self.assertFalse(d['is_live'])
+        self.assertEqual(d['date'], '2026-09-05')
+        self.assertIn('收盘口径', d['message'])
+
+    def test_all_fail_degrades_honestly(self):
+        with patch('stocks.market.sentiment.is_trading_day', return_value=True), \
+             patch('stocks.market.sentiment._date', _FakeDate), \
+             patch('akshare.stock_zt_pool_em', side_effect=RuntimeError('boom')):
+            d = market.sentiment.fetch_zt_sentiment(force=True)
+        self.assertFalse(d['available'])
+        self.assertTrue(d['message'])
+
+
+class MarginBalanceTests(SimpleTestCase):
+    """沪深两融余额：同日口径合计、深市未披露降级沪市与如实降级。"""
+
+    def setUp(self):
+        market._cache.clear()
+        from .market import _sources
+        _sources._source_state.clear()
+
+    @staticmethod
+    def _sse_df():
+        # 上游按日期倒序返回（最新在前），解析层应自行排序
+        return pd.DataFrame({
+            '信用交易日期': [20260904, 20260903, 20260902],
+            '融资余额': [1.3340e12, 1.3320e12, 1.3300e12],
+            '融券余量金额': [3.0e10, 2.93e10, 2.9e10],
+            '融资融券余额': [1.3640e12, 1.3613e12, 1.3500e12],
+        })
+
+    @staticmethod
+    def _sz_df(total, rz):
+        return pd.DataFrame({
+            '融资买入额': [710.12], '融资余额': [rz], '融券卖出量': [0.28],
+            '融券余量': [12.18], '融券余额': [total - rz], '融资融券余额': [total],
+        })
+
+    def test_sh_sz_same_day_total_and_change(self):
+        def fake_sz(date):
+            if date == '20260904':
+                return self._sz_df(12868.92, 12762.74)
+            if date == '20260903':
+                return self._sz_df(12900.00, 12780.00)
+            raise ValueError('该日未披露')  # 深交所对未披露日期直接抛错
+
+        with patch('stocks.market.sentiment.is_trading_day', return_value=True), \
+             patch('stocks.market.sentiment._date', _FakeDate), \
+             patch('akshare.stock_margin_sse', return_value=self._sse_df()), \
+             patch('akshare.stock_margin_szse', side_effect=fake_sz):
+            d = market.sentiment.fetch_margin_balance(force=True)
+        self.assertTrue(d['available'])
+        self.assertEqual(d['scope'], 'sh_sz')
+        self.assertEqual(d['date'], '2026-09-04')
+        self.assertEqual(d['total'], 26508.92)  # 13640.0 + 12868.92
+        self.assertEqual(d['sz_total'], 12868.92)
+        self.assertEqual(d['chg_1d'], -4.08)  # 26508.92 - (13613.0 + 12900.0)
+        self.assertEqual(d['chg_pct_1d'], -0.02)
+        self.assertFalse(d.get('message'))
+
+    def test_sz_unpublished_degrades_to_sh_only(self):
+        with patch('stocks.market.sentiment.is_trading_day', return_value=True), \
+             patch('stocks.market.sentiment._date', _FakeDate), \
+             patch('akshare.stock_margin_sse', return_value=self._sse_df()), \
+             patch('akshare.stock_margin_szse', side_effect=ValueError('未披露')):
+            d = market.sentiment.fetch_margin_balance(force=True)
+        self.assertTrue(d['available'])
+        self.assertEqual(d['scope'], 'sh_only')
+        self.assertEqual(d['total'], 13640.0)
+        self.assertIsNone(d['sz_total'])
+        self.assertEqual(d['chg_1d'], 27.0)  # 沪市口径：13640.0 - 13613.0
+        self.assertIn('沪市口径', d['message'])
+
+    def test_all_fail_degrades_honestly(self):
+        with patch('stocks.market.sentiment.is_trading_day', return_value=True), \
+             patch('stocks.market.sentiment._date', _FakeDate), \
+             patch('akshare.stock_margin_sse', side_effect=RuntimeError('boom')), \
+             patch('akshare.stock_margin_szse', side_effect=RuntimeError('boom')):
+            d = market.sentiment.fetch_margin_balance(force=True)
+        self.assertFalse(d['available'])
+        self.assertTrue(d['message'])

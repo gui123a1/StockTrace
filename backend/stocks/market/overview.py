@@ -11,6 +11,7 @@ from .etf import _fetch_etf_spot_df, get_etf_share_radar, get_national_team_etfs
 from .flows import fetch_hsgt_flow, fetch_market_activity, fetch_market_fund_flow_hist
 from .indices import fetch_index_trend, fetch_index_valuations, fetch_major_indices
 from .sectors import _sector_payload, fetch_concept_fund_flow
+from .sentiment import fetch_margin_balance, fetch_zt_sentiment
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,8 @@ def get_market_overview():
         'updated_at': _now_str(),
         'indices': indices,
         'valuations': fetch_index_valuations(),
+        'zt_sentiment': fetch_zt_sentiment(),
+        'margin_balance': fetch_margin_balance(),
         'fund': {
             'hsgt': hsgt,
             'northbound_net_buy': north_net if north_has else None,

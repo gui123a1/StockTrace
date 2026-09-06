@@ -39,6 +39,8 @@ const defaultModules = [
 
 const indices = computed(() => overview.value?.indices || [])
 const valuations = computed(() => overview.value?.valuations || { available: false, items: [] })
+const zt = computed(() => overview.value?.zt_sentiment || { available: false })
+const margin = computed(() => overview.value?.margin_balance || { available: false })
 const fund = computed(() => overview.value?.fund || {})
 const activity = computed(() => fund.value.activity || {})
 const hsgt = computed(() => fund.value.hsgt || [])
@@ -273,9 +275,58 @@ onUnmounted(() => {
             <span v-if="activity.activity"> · 活跃度 {{ activity.activity }}</span>
           </div>
         </div>
+        <div class="summary-card">
+          <div class="slabel">两融余额（沪深）</div>
+          <div class="svalue">
+            {{ margin.available && margin.total != null ? margin.total.toLocaleString() + ' 亿' : '-' }}
+          </div>
+          <div class="shint">
+            <span v-if="margin.chg_1d != null" :class="pctClass(margin.chg_1d)">
+              日变化 {{ margin.chg_1d > 0 ? '+' : '' }}{{ margin.chg_1d }} 亿
+            </span>
+            <span v-else>日变化 -</span>
+            <template v-if="margin.date"> · 截至 {{ margin.date }}</template>
+          </div>
+          <div v-if="margin.message" class="shint">{{ margin.message }}</div>
+        </div>
         <div class="summary-card chart-sm" v-if="activityChartOption.series">
           <v-chart :option="activityChartOption" autoresize style="height: 140px; width: 100%" />
         </div>
+      </div>
+
+      <div class="table-wrap" v-if="zt.available">
+        <h3>
+          涨停池情绪
+          <span v-if="zt.date" class="zt-date">
+            （{{ zt.date }}{{ zt.is_live ? ' · 盘中实时' : ' · 收盘口径' }}）
+          </span>
+        </h3>
+        <div class="zt-metrics">
+          <span>涨停 <b class="up">{{ zt.zt_count ?? '-' }}</b></span>
+          <span>炸板 <b>{{ zt.zb_count ?? '-' }}</b></span>
+          <span>跌停 <b class="down">{{ zt.dt_count ?? '-' }}</b></span>
+          <span>封板率 <b>{{ zt.seal_rate != null ? zt.seal_rate + '%' : '-' }}</b></span>
+          <span>最高连板 <b>{{ zt.max_lb != null ? zt.max_lb + ' 板' : '-' }}</b></span>
+          <span>连板家数 <b>{{ zt.lb_count ?? '-' }}</b></span>
+        </div>
+        <table class="data-table" v-if="zt.top?.length">
+          <thead>
+            <tr>
+              <th>代码</th><th>名称</th><th>连板数</th><th>行业</th><th>最新价</th><th>涨跌幅</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in zt.top" :key="row.code">
+              <td>{{ row.code }}</td>
+              <td>{{ row.name }}</td>
+              <td>{{ row.lb }} 板</td>
+              <td>{{ row.industry }}</td>
+              <td>{{ row.price ?? '-' }}</td>
+              <td :class="pctClass(row.pct)">{{ formatPct(row.pct) }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-if="zt.message" class="shint">{{ zt.message }}</div>
       </div>
 
       <div class="table-wrap">
@@ -575,6 +626,17 @@ onUnmounted(() => {
 }
 .sep { color: #555; }
 .shint { margin-top: 6px; font-size: 12px; color: #888; }
+
+.zt-date { color: #777; font-size: 12px; font-weight: normal; }
+.zt-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin: 8px 0 10px;
+  font-size: 13px;
+  color: #999;
+}
+.zt-metrics b { color: #eee; margin-left: 4px; }
 
 .table-wrap { overflow-x: auto; }
 
