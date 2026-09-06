@@ -1279,3 +1279,41 @@ class ThsFundFlowTests(SimpleTestCase):
         self.assertIsNone(df)
         from .market import _sources
         self.assertGreaterEqual(_sources._source_state['ths_test_src']['fails'], 1)
+
+
+class SnapshotCloseGuardTests(TestCase):
+    """15:30 守卫：交易日收盘前写当日快照会把上一日盘面标成今天（踩坑回归）。"""
+
+    def _save_with(self, fake_now, trade_date=None):
+        aware = timezone.make_aware(fake_now)
+        with patch('stocks.market.snapshots.timezone') as tz, \
+             patch('stocks.services.is_trading_day', _trading_true), \
+             patch(
+                 'stocks.market.sectors._ths_fund_flow_df',
+                 return_value=pd.DataFrame([{'行业': 'A', '净额': 1.0}]),
+             ), patch(
+                 'stocks.market.sectors._safe_df_call', return_value=None,
+             ), patch(
+                 'stocks.market.etf._normalized_etf_items', return_value=[],
+             ), patch(
+                 'stocks.market.flows.fetch_market_fund_flow_hist',
+                 return_value={'items': []},
+             ), patch('akshare.fund_etf_scale_sse', return_value=pd.DataFrame()):
+            tz.localtime.return_value = aware
+            return snapshots.save_daily_snapshots(trade_date=trade_date or aware.date())
+
+    def test_before_close_skips_same_day(self):
+        saved = self._save_with(datetime(2026, 9, 7, 10, 0))
+        self.assertEqual(saved, {})
+        self.assertFalse(
+            MarketDailySnapshot.objects.filter(trade_date='2026-09-07').exists()
+        )
+
+    def test_after_close_writes(self):
+        saved = self._save_with(datetime(2026, 9, 7, 16, 0))
+        self.assertEqual(saved[MarketDailySnapshot.KIND_INDUSTRY_FF], 1)
+
+    def test_past_date_not_blocked_by_close_guard(self):
+        # 补写 09-07 历史（当前时刻已是 09-08 上午）不受守卫限制
+        saved = self._save_with(datetime(2026, 9, 8, 10, 0), trade_date=datetime(2026, 9, 7).date())
+        self.assertEqual(saved[MarketDailySnapshot.KIND_INDUSTRY_FF], 1)

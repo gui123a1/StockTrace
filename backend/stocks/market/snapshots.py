@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from datetime import time as dt_time, timedelta
 
 from django.utils import timezone
 
@@ -43,6 +43,16 @@ def save_daily_snapshots(trade_date=None):
 
         if is_trading_day(trade_date) is False:
             logger.info(f'{trade_date} 非交易日，跳过快照落库')
+            return {}
+    except Exception:
+        pass
+
+    # 15:30 守卫：交易日收盘前写「当日」快照，会把上一交易日的盘面数据标成
+    # 今天（2026-09-07 凌晨手动触发踩坑），与 _expected_latest_date 的时效语义一致
+    try:
+        now = timezone.localtime()
+        if trade_date == now.date() and now.time() < dt_time(15, 30):
+            logger.info(f'{trade_date} 未到 15:30 收盘，跳过当日快照落库')
             return {}
     except Exception:
         pass
