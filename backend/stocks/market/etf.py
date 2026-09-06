@@ -271,7 +271,8 @@ def _etf_history(code, range_name='3m', start_date=None, end_date=None, ttl=1200
         start = start_date
         end = end_date or datetime.now().date()
     else:
-        days = {'1w': 12, '1m': 45, '3m': 120, '6m': 240, '1y': 400}[range_name]
+        # 自然日回看长度：略大于名义周期（节假日缓冲），避免「半年」显示出 8 个月
+        days = {'1w': 12, '1m': 35, '3m': 100, '6m': 190, '1y': 375}[range_name]
         end = datetime.now().date()
         start = end - timedelta(days=days)
     # 多源路由：东财优先；东财失败/限流时切新浪（新浪无成交额/换手率，字段如实为 None）

@@ -40,7 +40,7 @@ const chartOption = computed(() => {
     legend: { data: ['收盘价', '成交额'], textStyle: { color: '#8490a8' }, top: 0 },
     grid: [{ left: 45, right: 14, top: 34, height: '54%' }, { left: 45, right: 14, top: '73%', height: '16%' }],
     xAxis: [
-      { type: 'category', data: history.value.map(i => i.date), axisLabel: { color: '#6f7d96', hideOverlap: true }, axisLine: { lineStyle: { color: '#2b3956' } } },
+      { type: 'category', data: history.value.map(i => i.date), axisLabel: { color: '#6f7d96', hideOverlap: true, showMinLabel: true, showMaxLabel: true }, axisLine: { lineStyle: { color: '#2b3956' } } },
       { type: 'category', gridIndex: 1, data: history.value.map(i => i.date), axisLabel: { show: false }, axisLine: { lineStyle: { color: '#2b3956' } } },
     ],
     yAxis: [
@@ -105,6 +105,9 @@ watch(range, load)
         <button class="apply" :disabled="!customStart || !customEnd || loading" @click="load">查询</button>
       </div>
       <v-chart v-if="history.length && chartOption.series" :option="chartOption" autoresize class="chart" />
+      <p v-if="history.length" class="history-range">
+        数据区间 {{ data.history.start_date }} ~ {{ data.history.end_date }} · {{ data.history.count }} 个交易日
+      </p>
       <div v-else class="history-empty">
         <b>价格历史暂不可用</b>
         <p>当前行情仍可查看；历史数据源恢复后可重新刷新。</p>
@@ -155,6 +158,7 @@ h2 { margin: 0; font-size: 18px; } header span { color: #71809a; font-size: 12px
 .win-stats span { color: #68758d; font-size: 11px; display: block; }
 .win-stats b { font-size: 12px; }
 .chart { width: 100%; height: 300px; }
+.history-range { margin: 2px 0 8px; color: #68758d; font-size: 11px; text-align: center; }
 .history-empty { min-height: 170px; margin: 10px 0; display: grid; place-content: center; text-align: center; border: 1px dashed #33445f; border-radius: 7px; color: #9ba8bd; }
 .history-empty p { margin: 5px 0 0; color: #68758d; font-size: 12px; }
 .returns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }.returns div { background: #0c172a; padding: 8px; text-align: center; border-radius: 6px; }.returns span { color: #68758d; font-size: 11px; display: block; }
