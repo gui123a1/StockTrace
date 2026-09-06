@@ -2,9 +2,9 @@ django>=4.2,<7.0
 djangorestframework>=3.14
 django-cors-headers>=4.0
 apscheduler>=3.10
-# 版本必须钉死：1.18.x 的同花顺封装对现行 11 列页面按旧 8 列解析会直接报错，
-# 导致 VPS 上行业/概念资金流第一优先源失效（2026-09-07 查明）
-akshare==1.16.96
+# 版本必须钉死（1.18.64 为 VPS 实测全集可用版本）：akshare 升级频繁且接口
+# 易变——同花顺板块资金流解析已由 sectors.py 自实现，不依赖其版本行为
+akshare==1.18.64
 baostock>=0.9
 cryptography>=42.0
 requests>=2.31
