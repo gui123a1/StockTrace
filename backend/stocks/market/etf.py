@@ -253,12 +253,16 @@ def _parse_sina_etf_hist(df):
     return items
 
 
+def _history_cache_key(code, range_name, start_date=None, end_date=None):
+    """自定义区间带起止日期入 key；与 _etf_history 内部保持一致（meta 来源标注依赖）。"""
+    if start_date:
+        return f'etf_history_{code}_custom_{start_date}_{end_date or "today"}'
+    return f'etf_history_{code}_{range_name}'
+
+
 def _etf_history(code, range_name='3m', start_date=None, end_date=None, ttl=1200):
     """range_name 为固定档位；start_date 给定时按自定义起止日期取数（end_date 缺省今天）。"""
-    if start_date:
-        cache_key = f'etf_history_{code}_custom_{start_date}_{end_date or "today"}'
-    else:
-        cache_key = f'etf_history_{code}_{range_name}'
+    cache_key = _history_cache_key(code, range_name, start_date, end_date)
     cached = _cache_get(cache_key, ttl)
     if cached is not None:
         return cached
@@ -370,7 +374,7 @@ def get_etf_detail(code, range_name='3m', start_date=None, end_date=None):
         chg_payload = {f'share_chg_{n}d': None for n in (1, 5, 20)}
         share_message = '尚未积累日度份额快照，暂不提供 1/5/20 日份额变化。'
     history = _etf_history(code, range_name=range_name, start_date=start, end_date=end)
-    history_key = f'etf_history_{code}_{range_name}'
+    history_key = _history_cache_key(code, range_name, start, end)
     history_dates = [item['date'] for item in history if item.get('date')]
     return {
         'meta': _cache_meta(

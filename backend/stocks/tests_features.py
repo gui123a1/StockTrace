@@ -593,6 +593,24 @@ class EtfCustomRangeTests(SimpleTestCase):
                 market.get_etf_detail(
                     '510300', 'custom', start_date='2020-01-01', end_date='2026-08-31')
 
+    def test_custom_range_meta_source_matches_actual_source(self):
+        """东财失败切新浪时，custom 区间的 meta 来源不能因缓存 key 不一致而误标。"""
+        sina_df = pd.DataFrame([
+            {'date': '2026-08-03', 'open': 4.0, 'high': 4.1, 'low': 3.9,
+             'close': 4.0, 'volume': 1000},
+        ])
+
+        def em_boom(**kwargs):
+            raise RuntimeError('502')
+
+        with self._quote_patch(), patch('akshare.fund_etf_hist_em', em_boom), patch(
+            'akshare.fund_etf_hist_sina', return_value=sina_df,
+        ):
+            data = market.get_etf_detail(
+                '510300', 'custom', start_date='2026-08-01', end_date='2026-08-31')
+        self.assertEqual(data['history']['meta']['source'], 'akshare.sina_etf_hist')
+        self.assertIsNone(data['history']['items'][0]['turnover'])
+
     def test_preset_range_still_accepted(self):
         em_df = pd.DataFrame([
             {'日期': '2026-09-01', '开盘': 4.0, '收盘': 4.1, '最高': 4.2, '最低': 3.9,
