@@ -144,6 +144,68 @@ def save_daily_snapshots(trade_date=None):
     return saved
 
 
+# 深市两融按日探测的候选天数上界：正常每交易日披露，取 8 天足以覆盖
+# 节假日空档；已写过的日期会被跳过，稳态下每天只需探测 1-2 天。
+_MARGIN_PROBE_CANDIDATES = 8
+
+
+def save_margin_snapshot():
+    """融资余额（沪深合计口径）日度快照落库，探测器「融资余额渐进」维度供数。
+
+    为什么不并入 save_daily_snapshots：两融为 T+1 披露且深市只能按日探测
+    （深交所对未披露日期直接抛错），放进每 30 分钟一轮的收盘预热链会产生
+    大量无效探测请求；探测器 17:15 的日度扫描每天调用一次即可（幂等覆盖）。
+    为什么只写沪深同日齐全的行：口径纪律与 sentiment 两融卡片一致——
+    不把单市场数值冒充合计、不混用不同日期的数据硬凑序列，某日深市未
+    披露该日就没有行，读取方按「窗口齐全才算数」如实降级。
+    """
+    from .sentiment import _recent_day_candidates, _sh_margin_rows, _sz_margin_row
+
+    try:
+        sh = _sh_margin_rows()
+    except Exception as e:
+        logger.warning(f'融资余额快照：沪市历史拉取失败: {e}')
+        return 0
+    if not sh:
+        return 0
+
+    # 已落库的日期不再探测（沪市数据不变，重探纯浪费请求）
+    existing = set(
+        MarketDailySnapshot.objects.filter(kind=MarketDailySnapshot.KIND_MARGIN)
+        .values_list('trade_date', flat=True)
+    )
+    written = 0
+    for day in _recent_day_candidates(_MARGIN_PROBE_CANDIDATES):
+        if day in existing:
+            continue
+        sh_row = sh.get(day.strftime('%Y%m%d'))
+        if not sh_row:
+            continue
+        sz_row = _sz_margin_row(day)
+        if not sz_row or sz_row.get('total') is None:
+            # 当日深市未披露（T+1 属预期状态），不是错误，静默跳过
+            continue
+        sh_total = sh_row.get('total') or 0.0
+        sz_total = sz_row.get('total') or 0.0
+        MarketDailySnapshot.objects.update_or_create(
+            kind=MarketDailySnapshot.KIND_MARGIN,
+            trade_date=day,
+            defaults={
+                'payload': [{
+                    'date': day.isoformat(),
+                    'total': round(sh_total + sz_total, 2),
+                    'sh_total': sh_row.get('total'),
+                    'sz_total': sz_row.get('total'),
+                    'rz': round((sh_row.get('rz') or 0) + (sz_row.get('rz') or 0), 2),
+                }],
+            },
+        )
+        written += 1
+    if written:
+        logger.info(f'融资余额快照新增 {written} 行')
+    return written
+
+
 def verify_daily_snapshots(trade_date=None):
     """快照落库自检：各 kind 均应有当日非空行；缺了如实列出（供预热任务推送告警）。
 

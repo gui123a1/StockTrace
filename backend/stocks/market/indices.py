@@ -135,6 +135,47 @@ def fetch_index_trend(days=120, ttl=300, start=None, end=None):
     _cache_set(cache_key, data)
     return data
 
+
+def fetch_index_daily_series(code, days=70, ttl=300):
+    """单指数日线完整 OHLCV 序列（探测器平静判定与波动维度供数）。
+
+    为什么不复用 fetch_index_trend：走势接口为多指数归一化对比只保留了
+    close/volume，探测器做「振幅低位」判定需要 high/low。上游接口完全
+    相同（新浪指数日线 stock_zh_index_daily），本函数只是按单指数保留
+    完整 OHLCV 并走同一套 TTL 缓存——不是新数据源，是同一接口的薄扩展。
+    上游失败如实 available=False，由探测器把该指数当天跳过。
+    """
+    cache_key = f'idx_series_{code}_{days}'
+    cached = _cache_get(cache_key, ttl)
+    if cached is not None:
+        return cached
+
+    df = _safe_df_call(ak.stock_zh_index_daily, symbol=code, source_name=f'sina_index_daily_{code}')
+    if df is None or df.empty:
+        return {'available': False, 'items': [], 'message': '指数日线暂不可用'}
+
+    work = df.copy()
+    work['date'] = pd.to_datetime(work['date']).dt.strftime('%Y-%m-%d')
+    work = work.sort_values('date').tail(days)
+    items = []
+    for _, r in work.iterrows():
+        items.append({
+            'date': str(r['date']),
+            'open': _to_float(r.get('open')),
+            'high': _to_float(r.get('high')),
+            'low': _to_float(r.get('low')),
+            'close': _to_float(r.get('close')),
+            'volume': _to_float(r.get('volume')),
+        })
+    data = {
+        'available': bool(items),
+        'items': items,
+        'message': '' if items else '指数日线暂不可用',
+    }
+    if items:
+        _cache_set(cache_key, data)
+    return data
+
 # 乐咕乐股滚动市盈率覆盖的宽基（创业板指/科创50 该源未提供，如实缺席）
 _VALUATION_INDICES = ('沪深300', '上证50', '中证500', '中证1000')
 

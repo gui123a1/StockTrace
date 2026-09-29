@@ -30,6 +30,12 @@ from .ai.views import (
     screener_ai,
     screener_ai_comment,
 )
+from .detector.views import (
+    detector_config,
+    detector_heatmap,
+    detector_signal_detail,
+    detector_signals,
+)
 
 router = DefaultRouter()
 router.register(r'stocks', StockViewSet, basename='stock')
@@ -61,4 +67,9 @@ urlpatterns = [
     path('market/etfs/<str:code>/', market_etf_detail, name='market-etf-detail'),
     path('market/stock-margin/<str:code>/', market_stock_margin, name='market-stock-margin'),
     path('market/institutions/', market_institutions, name='market-institutions'),
+    # 探测器（一级功能模块）
+    path('detector/signals/', detector_signals, name='detector-signals'),
+    path('detector/signals/<int:pk>/', detector_signal_detail, name='detector-signal-detail'),
+    path('detector/heatmap/', detector_heatmap, name='detector-heatmap'),
+    path('detector/config/', detector_config, name='detector-config'),
 ]

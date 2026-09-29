@@ -5,6 +5,7 @@ import { RouterLink, useRoute } from 'vue-router'
 const route = useRoute()
 const isWatchlist = computed(() => route.path === '/' || route.path.startsWith('/stock/'))
 const isMarket = computed(() => route.path.startsWith('/market'))
+const isDetector = computed(() => route.path.startsWith('/detector'))
 const isScreener = computed(() => route.path.startsWith('/screener'))
 const isSettings = computed(() => route.path.startsWith('/settings'))
 </script>
@@ -17,6 +18,7 @@ const isSettings = computed(() => route.path.startsWith('/settings'))
     <div class="nav-links">
       <RouterLink to="/" :class="{ active: isWatchlist }">自选</RouterLink>
       <RouterLink to="/market" :class="{ active: isMarket }">数据</RouterLink>
+      <RouterLink to="/detector" :class="{ active: isDetector }">探测器</RouterLink>
       <RouterLink to="/screener" :class="{ active: isScreener }">选股</RouterLink>
       <RouterLink to="/settings" :class="{ active: isSettings }">设置</RouterLink>
     </div>

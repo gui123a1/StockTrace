@@ -1,0 +1,148 @@
+"""平静状态判定：探测器的前置闸门——量能平稳、振幅低位的对象才进入微变监测。
+
+为什么做成独立闸门而不是一个维度：任务定义的探测目标是「成交量处于
+相对平稳区间时，监测其他维度的渐进变化」。平静是前提条件（过滤宇宙），
+不是投票维度——把它放进投票会稀释「≥2 维同向」的方向性语义。
+
+阈值依据（平静参数不参与自动迭代，理由在文件尾）：
+- RVOL 0.7~1.5：任务明确给定的平静区间；
+- 量能波动收窄 / 振幅低位：取自身历史的 40 分位——「低位」必须是相对
+  自己的历史而言（高波动股与低波动股的「平静」标准不同），40 分位
+  让约六成时间有候选对象，又不至于把常态波动当平静。
+"""
+
+from __future__ import annotations
+
+from .dimensions import _mean, _percentile, _std
+
+# 指数/个股：成交量口径的平静判定参数
+PRICE_CALM_PARAMS = {
+    'rvol_min': 0.7,     # 当日量 / 前10日均量 下限
+    'rvol_max': 1.5,     # 上限：超过 1.5 已经「不平静」
+    'lookback': 60,      # 自身历史分位的取样窗口
+    'vol_cv_pct': 0.4,   # 近5日量能变异系数 ≤ 自身历史 40 分位 → 收窄
+    'amp_pct': 0.4,      # 当日振幅 ≤ 自身历史 40 分位 → 振幅低位
+}
+# 板块：快照口径（无成交量）的平静判定参数
+SECTOR_CALM_PARAMS = {
+    'window': 5,
+    'flow_pct': 0.5,   # 近3日平均|净额| ≤ 自身历史中位数 → 资金面平稳
+    'chg_pct': 0.4,    # 近5日涨跌幅标准差 ≤ 自身历史 40 分位 → 波动低位
+}
+
+
+def _rvol(volumes, i, window=10):
+    """第 i 日的量比：当日量 / 前 window 日均量；数据不齐返回 None。"""
+    if i < window or volumes[i] is None:
+        return None
+    base = _mean(volumes[i - window:i])
+    if not base:
+        return None
+    return volumes[i] / base
+
+
+def is_calm_price(ctx, params=None):
+    """指数/个股平静判定：量比居中 + 量能波动收窄 + 振幅低位。
+
+    返回 (is_calm, metrics)：metrics 里带未达标原因（首条），供 run 日志
+    聚合统计「为什么今天没有候选对象」。
+    """
+    params = {**PRICE_CALM_PARAMS, **(params or {})}
+    volumes, reasons = ctx.get('volume') or [], []
+
+    rvol = _rvol(volumes, len(volumes) - 1)
+    if rvol is None:
+        return False, {'reason': '成交量历史不足，无法判定平静'}
+    if not (params['rvol_min'] <= rvol <= params['rvol_max']):
+        reasons.append(f'RVOL={rvol:.2f} 超出平静区间')
+
+    # 量能波动收窄：近5日量的变异系数(CV) 对比自身滚动 CV 的分位
+    # （5 日窗口是「周尺度波动」的固定口径，与维度参数无关，故不进 params）
+    k = 5
+    n = len(volumes)
+    lookback = params['lookback']
+    cvs = []
+    start = max(k, n - lookback)
+    for i in range(start, n + 1):
+        win = volumes[max(0, i - k):i]
+        m = _mean(win)
+        if m and all(v is not None for v in win):
+            cvs.append(_std(win) / m)
+    current_cv = _std(volumes[-k:]) / _mean(volumes[-k:]) if _mean(volumes[-k:]) else None
+    if current_cv is None or not cvs:
+        return False, {'reason': '量能样本不足，无法判定收窄'}
+    if current_cv > _percentile(cvs, params['vol_cv_pct']):
+        reasons.append('量能波动未收窄')
+
+    # 振幅低位：(high-low)/prev_close 与自身历史比
+    highs, lows, closes = ctx.get('high'), ctx.get('low'), ctx.get('close')
+    amps = []
+    if highs and lows and closes:
+        for i in range(1, len(closes)):
+            h, low, pc = highs[i], lows[i], closes[i - 1]
+            if None not in (h, low, pc) and pc:
+                amps.append((h - low) / pc * 100)
+    if len(amps) < 10:
+        return False, {'reason': '振幅样本不足'}
+    amp_now = amps[-1]
+    amp_base = amps[max(0, len(amps) - lookback):]
+    if amp_now > _percentile(amp_base, params['amp_pct']):
+        reasons.append(f'振幅 {amp_now:.2f}% 非低位')
+
+    if reasons:
+        return False, {'reason': reasons[0], 'rvol': round(rvol, 3)}
+    return True, {'rvol': round(rvol, 3), 'cv': round(current_cv, 3)}
+
+
+def is_calm_sector(ctx, params=None):
+    """板块平静判定（快照口径）：资金面平稳 + 涨跌幅波动低位。
+
+    板块没有成交量序列（快照 payload 只有净额与涨跌幅），「量能平稳」
+    用净额波动平稳代理——这是口径替换而非伪造，已在文档中说明。
+    """
+    params = {**SECTOR_CALM_PARAMS, **(params or {})}
+    nets, pcts = ctx.get('net') or [], ctx.get('change_pct') or []
+    window = params['window']
+
+    if len(nets) < window + 3:
+        return False, {'reason': '净额快照窗口不足'}
+
+    # 近 3 日平均|净额| 对比自身滚动 3 日均值的历史分位
+    roll = []
+    for i in range(len(nets) - 2):
+        win = nets[i:i + 3]
+        if all(v is not None for v in win):
+            roll.append(_mean([abs(v) for v in win]))
+    tail = nets[-3:]
+    if any(v is None for v in tail) or not roll:
+        return False, {'reason': '净额窗口存在缺失快照'}
+    flow_now = _mean([abs(v) for v in tail])
+    if flow_now > _percentile(roll, params['flow_pct']):
+        return False, {'reason': '资金净额波动未收窄'}
+
+    chg_std = _std(pcts[-window:]) if len(pcts) >= window else None
+    if chg_std is None:
+        return False, {'reason': '涨跌幅窗口不足'}
+    roll_std = [
+        _std(pcts[i - window:i])
+        for i in range(window, len(pcts) + 1)
+        if all(v is not None for v in pcts[i - window:i])
+    ]
+    if chg_std > _percentile(roll_std, params['chg_pct']):
+        return False, {'reason': '涨跌幅波动非低位'}
+
+    return True, {'flow': round(flow_now, 0), 'chg_std': round(chg_std, 3)}
+
+
+def is_calm(ctx, params=None):
+    """按对象类型分派的平静判定入口。"""
+    if ctx['kind'] in ('index', 'stock'):
+        return is_calm_price(ctx, params)
+    return is_calm_sector(ctx, params)
+
+
+# 为什么平静参数不参与 review 的自动迭代：迭代优化的反馈信号是「信号
+# 兑现与否」，而平静闸门决定了「今天有没有候选对象」——拿兑现率去调
+# 闸门会让扫描宇宙随命中率漂移（命中率低→放宽平静→更多弱候选→命中率
+# 更低），形成正反馈失控。维度参数（min/权重）在固定宇宙内调整才是
+# 可归因的。因此平静参数只在代码/配置层人工调整。

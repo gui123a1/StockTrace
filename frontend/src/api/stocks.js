@@ -120,6 +120,26 @@ export const marketApi = {
   },
 }
 
+// 探测器（平静盘面下的渐进微变监测，日度扫描结果）
+export const detectorApi = {
+  // 信号列表；params 传 { severity, direction, target_kind, status, date, all_dates, page, page_size }
+  getSignals(params = {}) {
+    return api.get('/detector/signals/', { ...marketTimeout, params })
+  },
+  // 信号详情（含各微变维度近 20 日曲线）
+  getSignalDetail(id) {
+    return api.get(`/detector/signals/${id}/`, marketTimeout)
+  },
+  // 板块微变热力图；params 传 { board: 'industry' | 'concept' }
+  getHeatmap(params = {}) {
+    return api.get('/detector/heatmap/', { ...marketTimeout, params })
+  },
+  // 维度配置与迭代状态（权重/阈值/停用原因/近期运行摘要）
+  getConfig() {
+    return api.get('/detector/config/', marketTimeout)
+  },
+}
+
 // 自选分组
 export const groupApi = {
   list() {

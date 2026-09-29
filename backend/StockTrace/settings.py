@@ -55,6 +55,9 @@ STOCKTRACE_AI_DAILY_LIMIT = int(os.environ.get('STOCKTRACE_AI_DAILY_LIMIT', '100
 STOCKTRACE_PUSH_URL = os.environ.get('STOCKTRACE_PUSH_URL', '')
 # AI 调用流水保留天数（scheduler 收盘清理 AiCallLog 用）
 AI_CALL_LOG_RETENTION_DAYS = int(os.environ.get('AI_CALL_LOG_RETENTION_DAYS', '90'))
+# 探测器保留策略：信号行小（600 天对齐市场快照）；run 含热力图矩阵较大，保留更短
+DETECTOR_SIGNAL_RETENTION_DAYS = int(os.environ.get('DETECTOR_SIGNAL_RETENTION_DAYS', '600'))
+DETECTOR_RUN_RETENTION_DAYS = int(os.environ.get('DETECTOR_RUN_RETENTION_DAYS', '120'))
 
 
 # Application definition

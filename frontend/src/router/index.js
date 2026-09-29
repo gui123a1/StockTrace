@@ -9,6 +9,7 @@ const MarketSectors = () => import('../views/MarketSectors.vue')
 const MarketInstitutions = () => import('../views/MarketInstitutions.vue')
 const MarketNationalEtf = () => import('../views/MarketNationalEtf.vue')
 const MarketEtfRadar = () => import('../views/MarketEtfRadar.vue')
+const Detector = () => import('../views/Detector.vue')
 const Settings = () => import('../views/Settings.vue')
 const Screener = () => import('../views/Screener.vue')
 
@@ -47,6 +48,11 @@ const routes = [
     path: '/market/etf-radar',
     name: 'MarketEtfRadar',
     component: MarketEtfRadar,
+  },
+  {
+    path: '/detector',
+    name: 'Detector',
+    component: Detector,
   },
   {
     path: '/stock/:id',

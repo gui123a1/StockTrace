@@ -6,6 +6,7 @@ APScheduler 集成到 Django
 2. 盘中每5分钟更新分钟数据（随后评估价格提醒）
 3. 收盘后 15:10 汇总当日日线+分钟（自选库最后一次自动写入；随后评估价格提醒、清理 AI 调用记录）
 4. 收盘后 15:30–21:00 每30分钟预热晚到行情缓存并落日度快照（交易日）
+5. 每交易日 17:15 探测器扫描（板块/大盘快照已在前两轮预热落库后）
 
 多 worker（Gunicorn）下用文件锁保证仅一个进程持有调度器。
 """
@@ -202,6 +203,34 @@ def _post_close_lagging_job():
     warm_post_close_lagging()
 
 
+def _detector_scan_job():
+    """探测器日度扫描：每交易日 17:15（快照已落库、两融 T+1 基本可取）。
+
+    为什么 17:15 独立成任务而不是并入 15:30 预热链：板块/大盘快照要等
+    15:30/16:00 两轮预热写完，且融资余额快照只应每天探测一次（深市按日
+    探测有请求成本）；失败只记日志，不影响其他任务。
+    """
+    if os.environ.get('STOCKTRACE_DETECTOR', '1').lower() in ('0', 'false', 'no', 'off'):
+        return
+    from .services import is_trading_day
+
+    if not is_trading_day():
+        logger.debug('非交易日，跳过探测器扫描')
+        return
+    now = timezone.localtime()
+    if now.time() < dt_time(15, 30):
+        # 收盘守卫：与快照落库一致，防止 cron 误触发把上一交易日盘面标成今天
+        logger.debug('未到 15:30 收盘，跳过探测器扫描')
+        return
+
+    from .detector.scan import run_scan
+
+    try:
+        run_scan()
+    except Exception as e:
+        logger.error(f'探测器扫描失败: {e}')
+
+
 def start():
     """启动 APScheduler（带启动条件与单实例文件锁）"""
     global scheduler
@@ -252,12 +281,20 @@ def start():
         replace_existing=True,
     )
 
+    # 探测器：交易日 17:15（板块/大盘快照已在前两轮预热落库）
+    scheduler.add_job(
+        _detector_scan_job,
+        CronTrigger(day_of_week='mon-fri', hour=17, minute=15),
+        id='detector_scan',
+        replace_existing=True,
+    )
+
     scheduler.start()
     atexit.register(stop)
     logger.info(
         "APScheduler 已启动 "
         "(08:50 增量日线 / 09-14 */5 分钟 / 15:10 收盘汇总 / "
-        "15:30-21:00 */30 晚到行情预热)"
+        "15:30-21:00 */30 晚到行情预热 / 17:15 探测器扫描)"
     )
 
 

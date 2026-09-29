@@ -102,11 +102,15 @@ class MarketDailySnapshot(models.Model):
     KIND_CONCEPT_FF = 'concept_ff'
     KIND_ETF_SHARE = 'etf_share'
     KIND_MARKET_FF = 'market_ff'
+    # 探测器「融资余额渐进变化」维度的序列供数：两融 T+1 披露且无逐日历史接口
+    # （沪市 21 天回看、深市仅单日探测），只能靠日度快照积累出窗口。
+    KIND_MARGIN = 'margin'
     KIND_CHOICES = [
         (KIND_INDUSTRY_FF, '行业资金流'),
         (KIND_CONCEPT_FF, '概念资金流'),
         (KIND_ETF_SHARE, 'ETF份额'),
         (KIND_MARKET_FF, '大盘主力资金流'),
+        (KIND_MARGIN, '融资余额'),
     ]
 
     kind = models.CharField('快照类型', max_length=30, choices=KIND_CHOICES)
@@ -286,3 +290,139 @@ class MinuteBar(models.Model):
 
     def __str__(self):
         return f"{self.stock.code} {self.datetime}"
+
+
+class DetectorDimConfig(models.Model):
+    """探测器微变维度的可调配置（权重 / 阈值 / 启停）。
+
+    为什么独立成表：探测器的迭代优化要按回看命中率微调各维度的权重与
+    灵敏度阈值，调整结果必须跨重启持久化且可审计（调整流水在
+    DetectorRun.adjustments，本表 updated_at 记录最后生效时间）。
+    detector/registry.py 提供维度定义、默认参数与计算实现；本表只存
+    「当前生效值」，首次扫描时按注册表种子化。
+    """
+    key = models.CharField('维度标识', max_length=40, unique=True)
+    name = models.CharField('维度名称', max_length=50)
+    weight = models.FloatField('权重', default=1.0)
+    params = models.JSONField('维度参数（窗口/阈值等）', default=dict, blank=True)
+    is_enabled = models.BooleanField('启用', default=True)
+    disabled_reason = models.CharField('停用原因', max_length=200, blank=True, default='')
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+
+    class Meta:
+        verbose_name = '探测器维度配置'
+        verbose_name_plural = '探测器维度配置'
+        ordering = ['key']
+
+    def __str__(self):
+        return f"{self.name} ({self.key}) w={self.weight:.2f}"
+
+
+class DetectorSignal(models.Model):
+    """探测器信号：每个目标对象（指数/自选股/板块）每个交易日最多一行。
+
+    为什么按天落库而不是只存「当前信号」：
+    - 信号判定要求「连续维持 2-3 个周期」，周期数需要回看历史行才能算出；
+    - 「回看 5 个交易日命中率」的迭代优化需要信号日 + 其后 5 日的兑现结果；
+    - 同 (kind, code, trade_date) 唯一 + 重跑 update_or_create，保证幂等。
+    """
+    TARGET_INDEX = 'index'
+    TARGET_STOCK = 'stock'
+    TARGET_INDUSTRY = 'industry'
+    TARGET_CONCEPT = 'concept'
+    TARGET_KIND_CHOICES = [
+        (TARGET_INDEX, '指数'),
+        (TARGET_STOCK, '自选股'),
+        (TARGET_INDUSTRY, '行业板块'),
+        (TARGET_CONCEPT, '概念板块'),
+    ]
+    DIRECTION_UP = 'up'
+    DIRECTION_DOWN = 'down'
+    DIRECTION_CHOICES = [
+        (DIRECTION_UP, '向上微变'),
+        (DIRECTION_DOWN, '向下微变'),
+    ]
+    # watching: 周期 1（刚满足投票，尚不构成「维持」）；active: 周期 ≥2；
+    # confirmed/missed: 5 日回看后兑现/未兑现（由 review 步骤推进）。
+    STATUS_WATCHING = 'watching'
+    STATUS_ACTIVE = 'active'
+    STATUS_CONFIRMED = 'confirmed'
+    STATUS_MISSED = 'missed'
+    STATUS_CHOICES = [
+        (STATUS_WATCHING, '观察中'),
+        (STATUS_ACTIVE, '维持中'),
+        (STATUS_CONFIRMED, '已兑现'),
+        (STATUS_MISSED, '未兑现'),
+    ]
+    SEVERITY_HIGH = 'high'
+    SEVERITY_MEDIUM = 'medium'
+    SEVERITY_LOW = 'low'
+    SEVERITY_CHOICES = [
+        (SEVERITY_HIGH, '高'),
+        (SEVERITY_MEDIUM, '中'),
+        (SEVERITY_LOW, '低'),
+    ]
+
+    target_kind = models.CharField('对象类型', max_length=20, choices=TARGET_KIND_CHOICES)
+    target_code = models.CharField('对象代码', max_length=30)
+    target_name = models.CharField('对象名称', max_length=50, blank=True, default='')
+    trade_date = models.DateField('信号交易日')
+    direction = models.CharField('方向', max_length=10, choices=DIRECTION_CHOICES)
+    cycles = models.IntegerField('连续周期数', default=1)
+    score = models.FloatField('同向强度(0-100)', default=0.0)
+    severity = models.CharField('严重程度', max_length=10, choices=SEVERITY_CHOICES, default='low')
+    status = models.CharField('状态', max_length=20, choices=STATUS_CHOICES, default=STATUS_WATCHING)
+    # 每个维度的评估明细：{key: {name, value, direction, weight, available, note}}；
+    # 用 JSON 而非关联表：单日单对象的维度快照是只读整体，无需单独查询/索引
+    dimensions = models.JSONField('维度明细', default=dict, blank=True)
+    review_hit = models.BooleanField('回看是否兑现', null=True, blank=True)
+    hit_date = models.DateField('兑现日期', null=True, blank=True)
+    reviewed_at = models.DateTimeField('回看时间', null=True, blank=True)
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+
+    class Meta:
+        verbose_name = '探测器信号'
+        verbose_name_plural = '探测器信号'
+        unique_together = ['target_kind', 'target_code', 'trade_date']
+        ordering = ['-trade_date', '-score']
+        indexes = [
+            models.Index(fields=['trade_date', 'severity']),
+            models.Index(fields=['status', 'review_hit']),
+        ]
+
+    def __str__(self):
+        return f"{self.get_target_kind_display()} {self.target_name or self.target_code} {self.trade_date} {self.direction}"
+
+
+class DetectorRun(models.Model):
+    """探测器扫描运行日志：每交易日一行（幂等覆盖），迭代与降级全程留痕。
+
+    matrix 存当日全部平静板块对象 × 维度的微变分值（热力图直接供数），
+    是本表唯一较大的字段——由 DETECTOR_RUN_RETENTION_DAYS 定期清理。
+    """
+    trade_date = models.DateField('扫描交易日', unique=True)
+    # ok: 全部数据源正常；partial: 部分对象/维度因上游或快照不足降级；failed: 扫描未完成
+    status = models.CharField('运行状态', max_length=20, default='ok')
+    targets_scanned = models.IntegerField('扫描对象数', default=0)
+    calm_count = models.IntegerField('平静对象数', default=0)
+    signals_new = models.IntegerField('新增观察信号数(周期1)', default=0)
+    signals_sustained = models.IntegerField('维持信号数(周期≥2)', default=0)
+    reviewed_count = models.IntegerField('回看信号数', default=0)
+    hit_count = models.IntegerField('回看命中数', default=0)
+    hit_rate = models.FloatField('回看命中率', null=True, blank=True)
+    degraded = models.JSONField('降级记录', default=list, blank=True)
+    adjustments = models.JSONField('权重/阈值调整流水', default=list, blank=True)
+    matrix = models.JSONField('板块微变矩阵', default=dict, blank=True)
+    message = models.CharField('备注', max_length=300, blank=True, default='')
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+
+    class Meta:
+        verbose_name = '探测器扫描记录'
+        verbose_name_plural = '探测器扫描记录'
+        ordering = ['-trade_date']
+
+    def __str__(self):
+        return f"{self.trade_date} {self.status}"
