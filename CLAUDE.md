@@ -30,6 +30,7 @@ DJANGO_DEBUG=true python manage.py test stocks     # 全部测试（调度器自
 DJANGO_DEBUG=true python manage.py validate_market_sources  # 只读上游字段/数据源审计，不写库
 python -m ruff check .                  # lint（ruff.toml：仅 E4/E7/E9/F）
 DJANGO_DEBUG=true python manage.py fetch_stock_data --all # 手动拉自选行情（默认 light，full=1 更全）
+DJANGO_DEBUG=true python manage.py run_detector_scan     # 手动触发探测器扫描（幂等；非交易日/收盘前如实跳过）
 
 cd frontend
 npm run dev        # 5173，/api 代理到 localhost:8000（VITE_API_TARGET 可覆盖）
@@ -40,10 +41,11 @@ npm run lint && npm run build   # eslint（vue essential 档）+ 产物到 dist/
 
 | 层 | 位置 |
 |---|---|
-| 模型 | `backend/stocks/models.py`（Stock / DailyQuote / MinuteBar） |
+| 模型 | `backend/stocks/models.py`（Stock / DailyQuote / MinuteBar / MarketDailySnapshot / PriceAlert / DetectorSignal 等） |
 | 自选行情抓取（多源降级） | `backend/stocks/services.py`（EastMoney→Sina→BaoStock→Tencent） |
 | 后台拉取线程 | `backend/stocks/tasks.py`（异步 + fetch-status 轮询） |
 | 行情中心 | `backend/stocks/market/` 包：`_cache`（TTL+交易日历保鲜）/`_sources`（冷却+failover）/`_query`/`periods`（**统一区间解析**）+ `indices`/`flows`/`sectors`/`etf`/`etf_flow`/`institutions`/`sentiment`（涨停池情绪/沪深两融汇总）/`margin_stock`（个股两融明细）/`snapshots`（日度快照+自检）/`holders`（定报持有人结构）/`overview` |
+| 探测器（一级模块） | `backend/stocks/detector/` 包：`registry`（维度注册表，单一事实来源）/`dimensions`（维度计算+序列构建）/`calm`（平静判定闸门）/`signals`（同向投票+周期+分级）/`review`（5日回看→权重/阈值有界迭代）/`scan`（编排+降级留痕）/`views`；平静盘面监测渐进微变，17:15 日度扫描 |
 | 调度器 | `backend/stocks/scheduler.py`（APScheduler + 文件锁单实例） |
 | REST + 页面 | `backend/stocks/views.py` `urls.py`；前端 `frontend/src/views/` `components/` |
 | 前端 API 封装 | `frontend/src/api/stocks.js`（axios baseURL `/api`） |
@@ -65,6 +67,14 @@ npm run lint && npm run build   # eslint（vue essential 档）+ 产物到 dist/
 | `market/`、`etf-radar/`、`national-etf/` | 当日快照 | 份额变化与 5/10/20 日轮动**需日度快照积累（二期，勿伪造）** |
 
 所有行情响应带 `meta`（available/source/source_data_date/data_as_of/fetched_at/cache_status/disclaimer）；缓存是交易日历感知的：非交易时段只要缓存已覆盖最近已完成交易日收盘就算新鲜，不重拉上游。
+
+## 探测器口径与边界（改 detector/ 前必读）
+
+- **数据诚信**：维度只用真实上游/本站快照推导；`委比与挂单结构`（无盘口数据源）、`板块内分化`（快照缺成分股横截面）两维度在 `registry.py` 显式 `enabled=False` 并写明原因，**不得用代理值冒充**，接入数据源后再开启。
+- **换手率分位**＝成交量自身 60 日分位：个股窗口内股本不变时与换手率分位单调等价（口径已在 README/API note 标注）；指数为活跃度代理。
+- **融资余额**：交易所 T+1 披露，`MarketDailySnapshot` 新 kind `margin` 由探测器扫描落库（只写沪深同日齐全行）；北向自 2024-08 停止逐日披露，维度如实仅融资余额口径。
+- **平静参数不参与自动迭代**：review 只调维度权重 [0.5, 2.0] 与投票门槛 min（[0.5×, 2×] 默认值）；调平静闸门会让扫描宇宙随命中率漂移（正反馈失控），只能人工改。
+- 信号 `trade_date` 跟随数据自身日期（`ctx.as_of`），上游晚到不冒充扫描当天；扫描幂等（信号/run 行按日期覆盖），回看只处理 `review_hit` 为 null 的行。
 
 ## 不变量与红线（违反=事故）
 
